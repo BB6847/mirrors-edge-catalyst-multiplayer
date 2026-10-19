@@ -1,0 +1,16 @@
+# compilation
+overlay/build/
+*.o
+build/
+dist/
+*.spec
+__pycache__/
+*.exe
+*.dll
+
+# données locales (jamais publiées : pseudos, IP, sauvegardes, journaux)
+coop_config.json
+sauvegardes/
+archive_*/
+log_*.txt
+*.log
