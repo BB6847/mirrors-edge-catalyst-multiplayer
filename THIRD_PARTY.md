@@ -1,9 +1,10 @@
-# Code tiers
+# Third-party code / Code tiers
 
-## MECMP — licence MIT
+## MECMP — MIT license / licence MIT
 https://github.com/CodeNameMeteor/mecmp — Copyright (c) 2026 MECMP contributors.
-Méthodes et adresses du moteur reprises (fantômes, apparence, sons, voix, écoute des messages du jeu) ;
-les fichiers concernés de `overlay/src/` le mentionnent en tête.
+
+- EN: engine methods and addresses reused (ghosts, appearance, sounds, voice lines, listening to game messages). The files concerned in `overlay/src/` say so at the top.
+- FR : méthodes et adresses du moteur reprises (fantômes, apparence, sons, voix, écoute des messages du jeu). Les fichiers concernés de `overlay/src/` le mentionnent en tête.
 
 ```
 Copyright (c) 2026 MECMP contributors
@@ -28,11 +29,12 @@ SOFTWARE.
 
 ```
 
-## Dear ImGui — licence MIT
-https://github.com/ocornut/imgui — copié dans `overlay/third_party/imgui` (v1.91.9, fichiers nécessaires seulement), licence : `LICENSE.txt`.
+## Dear ImGui — MIT
+https://github.com/ocornut/imgui — `overlay/third_party/imgui` (v1.91.9, required files only / fichiers nécessaires seulement), license: `LICENSE.txt`.
 
-## MinHook — licence BSD 2-Clause
-https://github.com/TsudaKageyu/minhook — copié dans `overlay/third_party/minhook` (commit 8af6b4a), licence : `LICENSE.txt`.
+## MinHook — BSD 2-Clause
+https://github.com/TsudaKageyu/minhook — `overlay/third_party/minhook` (commit 8af6b4a), license: `LICENSE.txt`.
 
 ## Mirror's Edge Catalyst
-Jeu d'EA / DICE. Aucun fichier, binaire ou contenu du jeu n'est inclus dans ce dépôt.
+- EN: game by EA / DICE. No game files, binaries or content are included in this repository.
+- FR : jeu d'EA / DICE. Aucun fichier, binaire ou contenu du jeu n'est inclus dans ce dépôt.

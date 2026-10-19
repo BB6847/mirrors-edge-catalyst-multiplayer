@@ -1,92 +1,98 @@
 # MEC Coop
 
-Mod coopératif **non officiel** pour **Mirror's Edge Catalyst** (PC) : jusqu'à 4 joueurs dans la même ville.
+[Français](README.fr.md) · **English**
 
-- **Les autres joueurs en 3D** : vus avec l'apparence de Faith (ou en fantôme rouge), animés, au bon endroit, avec un délai d'affichage qui s'adapte au réseau.
-- **Leurs sons** : pas, sauts, coups, respiration et voix, joués à leur position.
-- **Missions partagées** : quand un joueur lance une mission, les autres reçoivent une invitation dans le jeu (`Alt+M` pour aller au départ et la lancer avec ses cinématiques).
-- **Même monde** : celui qui rejoint reçoit la progression de l'hôte, chargée dans le jeu sans le redémarrer. Sa propre progression est mise de côté et revient toute seule ensuite.
-- **Heure du jour synchronisée** sur celle de l'hôte, **radar** par-dessus le jeu.
-- **Combats partagés** *(en test)* : les coups portés à un ennemi chez l'un sont appliqués au même ennemi chez l'autre.
+An **unofficial** co-op mod for **Mirror's Edge Catalyst** (PC): up to 4 players in the same city.
 
-> Projet de fans, sans lien avec EA ou DICE. Aucun fichier du jeu n'est fourni : il faut posséder le jeu (Steam / EA app).
-> Version du jeu prise en charge : **1.0.3.47248**. Sur une autre version, le mod se désactive tout seul.
+- **Other players in 3D**: shown as Faith (or as a red ghost), fully animated, at the right spot, with a display delay that adapts to the network.
+- **Their sounds**: footsteps, jumps, hits, breathing and voice lines, played where they are.
+- **Shared missions**: when a player starts a mission, the others get an in-game invite (`Alt+M` takes you to the start so you can launch it yourself, cutscenes included).
+- **Same world**: whoever joins receives the host's progression, loaded by the game without restarting it. Their own progression is set aside and comes back automatically afterwards.
+- **Time of day synced** to the host's, plus a **radar** drawn over the game.
+- **Shared combat** *(experimental)*: hits landed on an enemy by one player are applied to the same enemy for the others.
 
-## Utilisation
+> Fan project, not affiliated with EA or DICE. No game files are included: you need to own the game (Steam / EA app).
+> Supported game version: **1.0.3.47248**. On any other version the mod disables itself.
+>
+> The app's interface is in French. The buttons you need are **Héberger** (Host), **Rejoindre** (Join) and **Test solo** (Solo test).
 
-1. Tous les joueurs se mettent sur le même réseau, par exemple avec [Radmin VPN](https://www.radmin-vpn.com/). Port utilisé : **UDP 27777**.
-2. L'hôte lance le jeu et se balade en ville, puis clique **Héberger** dans coop et donne son IP.
-3. Les autres collent cette IP et cliquent **Rejoindre** : coop récupère la progression de l'hôte, l'installe (la leur est mise de côté dans `sauvegardes/`) et la fait charger au jeu.
-4. **Test solo** permet de tout essayer sans ami : un clone copie tes mouvements à côté de toi.
+## How to use
 
-Raccourcis dans le jeu :
+1. Put all players on the same network, for example with [Radmin VPN](https://www.radmin-vpn.com/). Port used: **UDP 27777**.
+2. The host starts the game and roams the city, then clicks **Héberger** (Host) in coop and shares their IP.
+3. The others paste that IP and click **Rejoindre** (Join). Coop fetches the host's progression, installs it (theirs is set aside in `sauvegardes/`) and has the game load it.
+4. **Test solo** lets you try everything alone: a clone copies your moves next to you.
 
-| Touche | Action |
+In-game hotkeys:
+
+| Key | Action |
 |---|---|
-| `Alt+M` | aller à la mission lancée par un autre joueur |
-| `Alt+1` / `Alt+2` | zoom du radar |
-| `Alt+3` | taille du radar |
-| `Alt+4` | coin de l'écran du radar |
-| `Alt+5` | masquer / afficher le radar |
+| `Alt+M` | go to the mission another player started |
+| `Alt+1` / `Alt+2` | radar zoom |
+| `Alt+3` | radar size |
+| `Alt+4` | radar screen corner |
+| `Alt+5` | hide / show the radar |
 
-### Sauvegardes
+### Saves
 
-Coop ne supprime jamais une sauvegarde :
+Coop never deletes a save:
 
-- **Avant d'installer le monde d'un autre**, ta progression est copiée dans `sauvegardes/`.
-- **Un marqueur** (`coop_monde_hote.json`, à côté des sauvegardes du jeu) indique qu'un autre monde est installé. Ta progression revient dès que tu joues seul ou quittes coop, même si coop a planté entre-temps.
+- **Before installing someone else's world**, your progression is copied to `sauvegardes/`.
+- **A marker file** (`coop_monde_hote.json`, next to the game's saves) records that another world is installed. Your progression comes back as soon as you play alone or quit coop, even if coop crashed in between.
 
-## Lancer depuis les sources
+## Running from source
 
-Il faut Windows et Python 3.10 ou plus récent (numpy et psutil sont installés au premier lancement).
+You need Windows and Python 3.10 or newer (numpy and psutil are installed on first launch).
 
 ```bat
 py coop.py
 ```
 
-`coop.py` cherche `mec_overlay.dll` à côté de lui ou dans `overlay/build/`.
+`coop.py` looks for `mec_overlay.dll` next to itself or in `overlay/build/`.
 
-Pour faire un exécutable (`coop_vX.Y.Z.exe`, avec l'overlay dedans) : `build_exe.bat` (installe PyInstaller : `py -m pip install pyinstaller`).
+To build an executable (`coop_vX.Y.Z.exe`, with the overlay bundled), run `build_exe.bat`. It needs PyInstaller: `py -m pip install pyinstaller`.
 
-## Compiler l'overlay (`mec_overlay.dll`)
+## Building the overlay (`mec_overlay.dll`)
 
 ```bash
 cd overlay
 ./build.sh
 ```
 
-- **Sous Windows**, il faut [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) dans le PATH et un terminal bash (Git Bash ou MSYS2).
-- **Sous Linux**, il faut clang et lld, avec llvm-mingw, ou `SYSROOT=<include/ et lib/ de mingw-w64> ./build.sh`.
+- **On Windows**, you need [llvm-mingw](https://github.com/mstorsjo/llvm-mingw) in your PATH and a bash shell (Git Bash or MSYS2).
+- **On Linux**, you need clang and lld, plus either llvm-mingw or `SYSROOT=<mingw-w64 include/ and lib/> ./build.sh`.
 
-## Comment ça marche
+## How it works
 
 ```
- jeu (MirrorsEdgeCatalyst.exe)                         coop.py
- ┌───────────────────────────────┐   mémoire partagée  ┌──────────────────────────┐   UDP 27777
- │ mec_overlay.dll               │ <─────────────────> │ fenêtre, réseau,         │ <──────────> autres joueurs
- │  • lit ma pose / mes sons /   │  Local\MECCoopPose  │ sauvegardes, missions    │   (l'hôte relaie)
- │    mes missions / mes coups   │                     └──────────────────────────┘
- │  • fait apparaître et anime   │
- │    les autres (fantômes)      │
- │  • ImGui : radar, messages    │
+ game (MirrorsEdgeCatalyst.exe)                        coop.py
+ ┌───────────────────────────────┐    shared memory    ┌──────────────────────────┐   UDP 27777
+ │ mec_overlay.dll               │ <─────────────────> │ window, network,         │ <──────────> other players
+ │  • reads my pose / sounds /   │  Local\MECCoopPose  │ saves, missions          │   (host relays)
+ │    missions / hits            │                     └──────────────────────────┘
+ │  • spawns and animates the    │
+ │    other players (ghosts)     │
+ │  • ImGui: radar, messages     │
  └───────────────────────────────┘
 ```
 
-| Fichier | Rôle |
+| File | Role |
 |---|---|
-| `coop.py` | l'application : interface, réseau (serveur qui relaie chez l'hôte, client chez chacun), partage et remise des sauvegardes, injection de l'overlay |
-| `overlay/src/game_core.cpp` | crochets dans le moteur, mémoire partagée, interpolation des joueurs distants |
-| `overlay/src/ghosts.cpp`, `models.cpp` | les personnages des autres joueurs (apparition, apparence, animation) |
-| `overlay/src/audio.cpp` | capture et lecture des sons |
-| `overlay/src/mission.cpp` | missions (début / fin) écoutées dans les messages du jeu |
-| `overlay/src/combat.cpp` | combats partagés |
-| `overlay/src/menu.cpp` | rechargement de la sauvegarde sans quitter le jeu |
-| `overlay/src/overlay.cpp` | rendu ImGui (DirectX 11), radar, invitations |
-| `tests/faux_pote.py` | un faux deuxième joueur, pour tester seul |
+| `coop.py` | the app: interface, networking (relay server on the host, client on every player), save sharing and restoring, overlay injection |
+| `overlay/src/game_core.cpp` | engine hooks, shared memory, remote player interpolation |
+| `overlay/src/ghosts.cpp`, `models.cpp` | the other players' characters (spawning, appearance, animation) |
+| `overlay/src/audio.cpp` | sound capture and playback |
+| `overlay/src/mission.cpp` | missions (start / end), read from the game's messages |
+| `overlay/src/combat.cpp` | shared combat |
+| `overlay/src/menu.cpp` | reloading the save without quitting the game |
+| `overlay/src/overlay.cpp` | ImGui rendering (DirectX 11), radar, invites |
+| `tests/faux_pote.py` | a fake second player, for testing alone |
 
-## Crédits
+Source code comments are in French.
 
-- [**MECMP**](https://github.com/CodeNameMeteor/mecmp) (licence MIT) : une partie des méthodes et des adresses du moteur, pour les fantômes, les sons et l'écoute des messages, vient de ce projet. Les fichiers concernés le disent en tête.
-- [**Dear ImGui**](https://github.com/ocornut/imgui) (MIT) et [**MinHook**](https://github.com/TsudaKageyu/minhook) (BSD 2-Clause), copiés dans `overlay/third_party/` avec leur licence.
+## Credits
 
-Voir [THIRD_PARTY.md](THIRD_PARTY.md). Licence du projet : [MIT](LICENSE).
+- [**MECMP**](https://github.com/CodeNameMeteor/mecmp) (MIT license): some of the engine methods and addresses, used for ghosts, sounds and listening to game messages, come from this project. The files concerned say so at the top.
+- [**Dear ImGui**](https://github.com/ocornut/imgui) (MIT) and [**MinHook**](https://github.com/TsudaKageyu/minhook) (BSD 2-Clause), copied into `overlay/third_party/` with their licenses.
+
+See [THIRD_PARTY.md](THIRD_PARTY.md). Project license: [MIT](LICENSE).
