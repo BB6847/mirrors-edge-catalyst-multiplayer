@@ -1,8 +1,8 @@
-# MEC Coop
+# Mirror's Edge Catalyst Multiplayer
 
 [Français](README.fr.md) · **English**
 
-An **unofficial** co-op mod for **Mirror's Edge Catalyst** (PC): up to 4 players in the same city.
+An **unofficial** co-op multiplayer mod for **Mirror's Edge Catalyst** (PC): up to 4 players in the same city.
 
 - **Other players in 3D**: shown as Faith (or as a red ghost), fully animated, at the right spot, with a display delay that adapts to the network.
 - **Their sounds**: footsteps, jumps, hits, breathing and voice lines, played where they are.
