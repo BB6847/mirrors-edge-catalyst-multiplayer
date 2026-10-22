@@ -2249,7 +2249,7 @@ TXT, DIM, FAINT = "#f2f3f5", "#8b929c", "#5a616b"
 RED, RED_HI, RED_LO = "#e3261c", "#ff3b30", "#9e1a13"
 GREEN, ORANGE, GREY = "#4cd964", "#ffb347", "#3a404b"
 FONT = "Segoe UI"
-APP_VERSION = "3.0.0"
+APP_VERSION = "3.0.1"
 
 
 def _round_rect(c, x1, y1, x2, y2, r, **kw):
@@ -2891,30 +2891,16 @@ class App:
                 self.save_msg = f"Chargement du monde de {name} dans le jeu (une quinzaine de secondes)."
             return
         if self.game_running():
-            ok = messagebox.askyesno(
-                "MEC Coop", f"Pour avoir le même monde que {name}, ton jeu doit redémarrer avec sa progression.\n\n"
-                "Fermer le jeu maintenant ? (ce que tu as fait depuis la dernière sauvegarde auto peut être perdu)\n\n"
-                "Non = rejoindre avec ta propre progression.")
-            if not ok:
-                self.save_msg = "Tu rejoins avec ta propre progression."
-                return
-            self.save_msg = "Fermeture du jeu..."
-            self.refresh_save()
-            for p in psutil.process_iter(["name"]):
-                n = (p.info["name"] or "").lower()
-                if "mirrorsedgecatalyst" in n and "trial" not in n:
-                    try:
-                        p.terminate()
-                    except psutil.Error:
-                        pass
-            end = time.time() + 20
-            while self.game_running() and time.time() < end:
-                self.root.update()
-                time.sleep(0.2)
-            if self.game_running():
-                self.save_msg = "Le jeu ne s'est pas fermé : tu rejoins avec ta propre progression."
-                return
-            time.sleep(1.0)
+            # jamais de fermeture du jeu : on rejoint en partie, ou on attend que le joueur y soit
+            if POSE and self.link and self.link.active and POSE.game_state() == 0:
+                self.save_msg = ("L'overlay dans ton jeu est une ancienne version : redémarre le jeu une fois (mise à "
+                                 "jour), puis rejoins. En attendant, tu rejoins avec ta propre progression.")
+                log("Overlay du jeu d'une ancienne version (pas de réponse) : redémarrage du jeu nécessaire une fois")
+            else:
+                self.save_msg = ("Entre en partie dans le jeu (pas au menu, pas en chargement), puis reclique "
+                                 "Rejoindre pour avoir le monde de l'hôte. Pour l'instant, tu rejoins avec le tien.")
+                log("Rejoindre : jeu pas en partie, monde de l'hôte non chargé")
+            return
         try:
             swapped = self.cfg.get("save_swapped")
             backup = use_host_save(name, data, make_backup=not swapped)
