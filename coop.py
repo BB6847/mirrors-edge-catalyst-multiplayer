@@ -2143,7 +2143,7 @@ TXT, DIM, FAINT = "#f2f3f5", "#8b929c", "#5a616b"
 RED, RED_HI, RED_LO = "#e3261c", "#ff3b30", "#9e1a13"
 GREEN, ORANGE, GREY = "#4cd964", "#ffb347", "#3a404b"
 FONT = "Segoe UI"
-APP_VERSION = "2.2.1"
+APP_VERSION = "2.2.2"
 
 
 def _round_rect(c, x1, y1, x2, y2, r, **kw):
@@ -2326,6 +2326,7 @@ class App:
         global POSE
         try:
             POSE = PoseLink()
+            POSE.set_notice("")              # un vieux message laissé par une session précédente
         except Exception as e:
             POSE = None
             log(f"Poses indisponibles : {e}")
@@ -3143,6 +3144,8 @@ class App:
                     log("Ma progression a été remise en quittant coop")
                 except OSError as e:
                     log(f"Impossible de remettre ma progression en quittant : {e}")
+        if POSE:
+            POSE.set_notice("")              # sans coop, personne ne l'effacerait (il resterait affiché dans le jeu)
         self.save()
         self.stop()
         self.root.destroy()
