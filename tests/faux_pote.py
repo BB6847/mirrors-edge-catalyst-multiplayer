@@ -14,9 +14,28 @@ import socket
 import sys
 import time
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))  # coop.py est un dossier au-dessus
-import coop  # noqa: E402
+HERE_T = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, HERE_T)
+sys.path.insert(0, os.path.dirname(HERE_T))  # coop.py est un dossier au-dessus
+
+
+def crash(msg):
+    """Une erreur : écrite dans faux_pote_erreur.txt (Claude peut la lire) et la fenêtre reste ouverte."""
+    try:
+        with open(os.path.join(HERE_T, "faux_pote_erreur.txt"), "w", encoding="utf-8") as f:
+            f.write(msg)
+    except OSError:
+        pass
+    print(msg)
+    input("\nAppuie sur Entrée pour fermer...")
+
+
+try:
+    import coop  # noqa: E402
+except BaseException:
+    import traceback
+    crash(traceback.format_exc())
+    raise SystemExit(1)
 
 NAME = "FauxPote"
 RADIUS = 15.0        # mètres
@@ -127,7 +146,6 @@ if __name__ == "__main__":
         main()
     except KeyboardInterrupt:
         pass
-    except Exception:
+    except BaseException:
         import traceback
-        traceback.print_exc()
-        input("\nAppuie sur Entrée pour fermer...")
+        crash(traceback.format_exc())

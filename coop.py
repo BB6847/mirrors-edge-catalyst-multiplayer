@@ -2143,7 +2143,7 @@ TXT, DIM, FAINT = "#f2f3f5", "#8b929c", "#5a616b"
 RED, RED_HI, RED_LO = "#e3261c", "#ff3b30", "#9e1a13"
 GREEN, ORANGE, GREY = "#4cd964", "#ffb347", "#3a404b"
 FONT = "Segoe UI"
-APP_VERSION = "2.2.0"
+APP_VERSION = "2.2.1"
 
 
 def _round_rect(c, x1, y1, x2, y2, r, **kw):
@@ -2742,6 +2742,10 @@ class App:
         except OSError:
             installed = b""
         if installed == data:
+            # même monde : rien à charger, mais ma progression est quand même mise de côté (copie + marqueur),
+            # pour que la progression de l'hôte puisse s'appliquer ensuite sans risque
+            if not read_marker():
+                self.install_host_save(name, data, launch=False)
             self.save_msg = f"Tu as déjà la progression de {name}."
             return
         if self.game_running() and POSE and self.link and self.link.active and POSE.game_state() == 2:
