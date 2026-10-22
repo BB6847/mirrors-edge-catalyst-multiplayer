@@ -1028,6 +1028,8 @@ class Client(threading.Thread):
         self.send_progress = False             # j'héberge : ma progression part chez les autres
         self.can_apply = lambda: False         # je rejoins avec le monde de l'hôte : j'applique sa progression
         self.pg_received = 0
+        self.pg_last_rx = 0.0
+        self.pg_host = ""
         self.pg_asked = 0                      # demandes de la table complète envoyées
         self.pg_ask_at = 0.0
         self.pg_snap_at = 0.0                  # (hôte) dernière table envoyée
@@ -1175,7 +1177,9 @@ class Client(threading.Thread):
                         POSE.prog_in(obj["pg"])
                         if not self.pg_received:
                             log(f"Progression de {obj.get('n')} : premiers drapeaux reçus")
+                            self.pg_host = str(obj.get("n"))[:16]
                         self.pg_received += len(obj["pg"])
+                        self.pg_last_rx = time.time()
                 elif isinstance(obj, dict) and isinstance(obj.get("a"), list) and obj.get("n") != self.name:
                     if POSE:
                         POSE.audio_in(str(obj.get("n"))[:16], obj["a"])
@@ -2156,7 +2160,7 @@ TXT, DIM, FAINT = "#f2f3f5", "#8b929c", "#5a616b"
 RED, RED_HI, RED_LO = "#e3261c", "#ff3b30", "#9e1a13"
 GREEN, ORANGE, GREY = "#4cd964", "#ffb347", "#3a404b"
 FONT = "Segoe UI"
-APP_VERSION = "2.3.0"
+APP_VERSION = "2.4.0"
 
 
 def _round_rect(c, x1, y1, x2, y2, r, **kw):
@@ -2916,6 +2920,45 @@ class App:
                     except OSError as e:
                         log(f"Remise de ma progression impossible : {e}")
 
+    def progress_flow(self):
+        """Celui qui rejoint : une fois toute la progression de l'hôte appliquée, la ville doit être reconstruite
+        avec (les points de départ de mission ne sont créés qu'au chargement). Le jeu sauvegarde tout seul 1,5 s
+        après un changement de drapeau hors mission ; on attend cette sauvegarde, puis on recharge (une fois)."""
+        net = self.net
+        if self.mode != "join" or not POSE or not isinstance(net, Client) or not net.pg_received:
+            return
+        st = getattr(self, "pg_reload", None)
+        if st is None:
+            try:
+                mt = os.path.getmtime(os.path.join(save_dir(), "PROF_SAVE"))
+            except OSError:
+                mt = 0
+            st = self.pg_reload = {"mtime": mt, "applied": POSE.prog_stats()[0], "done": False, "since": 0.0}
+        if st["done"]:
+            return
+        now = time.time()
+        if getattr(POSE, "_pg_pending", None) or now - net.pg_last_rx < 3 or getattr(self, "reloading", None):
+            return
+        applied = POSE.prog_stats()[0] - st["applied"]
+        if applied <= 0:                       # rien n'a changé : même monde, pas besoin de recharger
+            if now - net.pg_last_rx > 6:
+                st["done"] = True
+                log("Progression de l'hôte : déjà la même, pas de rechargement")
+            return
+        st["since"] = st["since"] or now
+        try:
+            mt = os.path.getmtime(os.path.join(save_dir(), "PROF_SAVE"))
+        except OSError:
+            mt = 0
+        if mt > max(st["mtime"], net.pg_last_rx) and POSE.game_state() == 2:   # sauvegarde faite APRÈS les derniers
+            st["done"] = True
+            log(f"Progression de l'hôte appliquée ({applied} drapeaux) et sauvegardée : rechargement de la ville")
+            host = net.pg_host or "l'hôte"
+            self.reload_game(f"Monde de {host} : chargement...")
+        elif now - st["since"] > 20:
+            st["done"] = True
+            log("Progression de l'hôte appliquée, mais le jeu n'a pas sauvegardé (en mission ?) : pas de rechargement")
+
     def install_host_save(self, name, data, launch):
         try:
             swapped = self.cfg.get("save_swapped")
@@ -3108,6 +3151,7 @@ class App:
         if self.radar:
             self.radar.destroy()
         self.net = self.server = self.radar = None
+        self.pg_reload = None
         self.mode = None
 
     def quit(self):
@@ -3320,6 +3364,7 @@ class App:
 
         self.refresh_teleport()
         self.save_flow()
+        self.progress_flow()
         self.auto_restore()
         self.refresh_save()
 
