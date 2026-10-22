@@ -9,6 +9,7 @@ Mod multijoueur coopératif **non officiel** pour **Mirror's Edge Catalyst** (PC
 - **Missions partagées** : quand un joueur lance une mission, les autres reçoivent une invitation dans le jeu (`Alt+M` pour aller au départ et la lancer avec ses cinématiques).
 - **Même monde** : celui qui rejoint reçoit la progression de l'hôte, chargée dans le jeu sans le redémarrer. Sa propre progression est mise de côté et revient toute seule ensuite.
 - **Heure du jour synchronisée** sur celle de l'hôte, **radar** par-dessus le jeu.
+- **Progression de l'histoire partagée** *(en test)* : quand l'hôte avance (missions, checkpoints), les mêmes drapeaux de l'histoire sont appliqués chez les autres, en direct. Voir [docs/progression.md](docs/progression.md).
 - **Combats partagés** *(en test)* : les coups portés à un ennemi chez l'un sont appliqués au même ennemi chez l'autre.
 
 > Projet de fans, sans lien avec EA ou DICE. Aucun fichier du jeu n'est fourni : il faut posséder le jeu (Steam / EA app).

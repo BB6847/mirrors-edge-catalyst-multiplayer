@@ -33,6 +33,11 @@ Game callers use `setFlag(mgr, flag, value, add, notify=0, checkMission=1)`.
 
 Flag meanings above are guesses from the recordings, not confirmed.
 
+## In the mod (2.1.0) / Dans le mod (2.1.0)
+
+Implemented in `overlay/src/progression.cpp` and `coop.py` (packets `"pg"`). Only the host's flags are relayed, and a
+joining player applies them only while their own save is backed up (marker present). Still experimental.
+
 ## Plan for co-op / Plan pour le coop
 
 - The host listens to `PamProgressionFlagUpdatedMessage` and sends (hash, value) to the others.

@@ -708,11 +708,18 @@ struct PoseShm {
     char notice[128];      // coop : texte affiché en haut de l'écran (vide = rien)
     uint32_t menuReq;      // coop : +1 = demande (v8)
     uint32_t menuKind;     // coop : 0 menu principal, 1 recharger la sauvegarde (v9)
+    // progression (v10) : drapeaux de l'histoire
+    uint32_t pgOutHead;    // overlay : mes changements de drapeaux
+    progression::Flag pgOut[256];
+    uint32_t pgInHead;     // coop : drapeaux de l'hôte à appliquer
+    progression::Flag pgIn[512];
+    uint32_t pgApplied;    // overlay : drapeaux appliqués
+    uint32_t pgMissing;    // overlay : drapeaux inconnus de mon jeu
 };
 #pragma pack(pop)
 static_assert(sizeof(ShmLocal) == 1056, "ShmLocal");
 static_assert(sizeof(ShmRemote) == 1092, "ShmRemote");
-static_assert(sizeof(PoseShm) == 39704, "PoseShm (coop.py : POSE_SIZE)");
+static_assert(sizeof(PoseShm) == 45864, "PoseShm (coop.py : POSE_SIZE)");
 
 static PoseShm* g_shm = NULL;
 static PoseShm* shm() {
@@ -720,7 +727,7 @@ static PoseShm* shm() {
     if (g_shm) return g_shm;
     if (GetTickCount() - lastTry < 1000) return NULL;
     lastTry = GetTickCount();
-    HANDLE h = OpenFileMappingA(FILE_MAP_ALL_ACCESS, FALSE, "Local\\MECCoopPose_v9");
+    HANDLE h = OpenFileMappingA(FILE_MAP_ALL_ACCESS, FALSE, "Local\\MECCoopPose_v10");
     if (!h) return NULL;
     PoseShm* p = (PoseShm*)MapViewOfFile(h, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(PoseShm));
     if (!p) { CloseHandle(h); return NULL; }
@@ -1031,6 +1038,36 @@ int take(Event* out, int cap) {
 }
 }  // namespace combat
 
+namespace progression {
+void publish(const Flag& f) {
+    PoseShm* s = shm();
+    if (!s || s->magic != 0x5043454D) return;
+    uint32_t h = s->pgOutHead;
+    s->pgOut[h % 256] = f;
+    MemoryBarrier();
+    s->pgOutHead = h + 1;
+}
+static uint32_t g_inLast = 0;
+static bool g_inFirst = true;
+int take(Flag* out, int cap, bool peek) {
+    PoseShm* s = shm();
+    if (!s || s->magic != 0x5043454D) return 0;
+    uint32_t h = *(volatile uint32_t*)&s->pgInHead;
+    if (g_inFirst) { g_inLast = h; g_inFirst = false; }
+    if (h - g_inLast > 512) g_inLast = h - 512;
+    MemoryBarrier();
+    int n = 0;
+    for (uint32_t i = g_inLast; i != h && n < cap; i++) out[n++] = s->pgIn[i % 512];
+    if (!peek) g_inLast += n;
+    return n;
+}
+void consumed(int n) { g_inLast += n; }
+void setStats(uint32_t applied, uint32_t missing) {
+    PoseShm* s = shm();
+    if (s && s->magic == 0x5043454D) { s->pgApplied = applied; s->pgMissing = missing; }
+}
+}  // namespace progression
+
 namespace notice {
 bool text(char* out, size_t cap) {
     PoseShm* s = shm();
@@ -1073,6 +1110,7 @@ static void onTick(void* world, float dt) {
     if (have) audio::setLocalPos(st.pos);
     research_ai::serverTick();
     combat::tick();
+    progression::serverTick();
     ghosts::tick(n - g_levelStartTick);
     // heure du jour et téléportation (demandes de coop.exe)
     PoseShm* s = shm();
@@ -1201,6 +1239,9 @@ static DWORD WINAPI MonitorThread(LPVOID) {
             size_t n = strlen(st);
             if (n + strlen(au) + 4 < sizeof(st)) { lstrcatA(st, " · "); lstrcatA(st, au); }
             if (strlen(st) + strlen(cb) + 4 < sizeof(st)) { lstrcatA(st, " · "); lstrcatA(st, cb); }
+            char pg[64];
+            progression::status(pg, sizeof(pg));
+            if (pg[0] && strlen(st) + strlen(pg) + 4 < sizeof(st)) { lstrcatA(st, " · "); lstrcatA(st, pg); }
             publishStatus(st);
         }
         Sleep(50);
@@ -1221,6 +1262,7 @@ void start() {
     mission::init();
     research_ai::init();
     combat::init();
+    progression::init();
     g_logLock.init();
     g_active = true;
     HANDLE t = CreateThread(NULL, 0, MonitorThread, NULL, 0, NULL);

@@ -329,6 +329,20 @@ void publish(const Event& e);                  // -> coop (game_core)
 int take(Event* out, int cap);                 // <- coop (game_core)
 }
 
+namespace progression {   // progression de l'histoire (drapeaux) : celle de l'hôte appliquée chez les autres
+#pragma pack(push, 1)
+struct Flag { uint32_t hash; int32_t value; };
+#pragma pack(pop)
+static_assert(sizeof(Flag) == 8, "progression::Flag (coop.py)");
+void init();
+void serverTick();                             // thread serveur
+void status(char* out, size_t cap);
+void publish(const Flag& f);                   // -> coop (game_core)
+int take(Flag* out, int cap, bool peek);       // <- coop (game_core)
+void consumed(int n);
+void setStats(uint32_t applied, uint32_t missing);
+}
+
 namespace research_ai {   // temporaire : ennemis, coups, K.O.
 void clientTick();
 void serverTick();
