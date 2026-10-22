@@ -2211,7 +2211,7 @@ TXT, DIM, FAINT = "#f2f3f5", "#8b929c", "#5a616b"
 RED, RED_HI, RED_LO = "#e3261c", "#ff3b30", "#9e1a13"
 GREEN, ORANGE, GREY = "#4cd964", "#ffb347", "#3a404b"
 FONT = "Segoe UI"
-APP_VERSION = "2.8.1"
+APP_VERSION = "2.8.2"
 
 
 def _round_rect(c, x1, y1, x2, y2, r, **kw):
@@ -2832,6 +2832,19 @@ class App:
                 self.install_host_save(name, data, launch=False)
             self.save_msg = f"Tu as déjà la progression de {name}."
             return
+        if self.game_running() and POSE and self.link and self.link.wanted and not self.link.active:
+            # coop vient d'être ouvert : l'overlay n'est pas encore dans le jeu. On l'injecte maintenant et on attend
+            # qu'il réponde (sinon on croirait le jeu hors partie et on proposerait de le fermer)
+            self.save_msg = "Connexion au jeu..."
+            self.refresh_save()
+            try:
+                self.link.ensure_injected(self.game.mem)
+            except Exception as e:                  # noqa: BLE001
+                log(f"Injection avant de rejoindre : {e}")
+            end = time.time() + 20
+            while time.time() < end and not (self.link.active and POSE.game_state() == 2):
+                self.root.update()
+                time.sleep(0.1)
         if self.game_running() and POSE and self.link and self.link.active and POSE.game_state() == 2:
             # le jeu sait recharger sa sauvegarde sans quitter (« ResumeSaveGame ») : on installe celle de l'hôte
             # (la mienne mise de côté) puis on lui demande de la recharger — ~15 s de chargement
