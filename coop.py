@@ -2211,7 +2211,7 @@ TXT, DIM, FAINT = "#f2f3f5", "#8b929c", "#5a616b"
 RED, RED_HI, RED_LO = "#e3261c", "#ff3b30", "#9e1a13"
 GREEN, ORANGE, GREY = "#4cd964", "#ffb347", "#3a404b"
 FONT = "Segoe UI"
-APP_VERSION = "2.7.0"
+APP_VERSION = "2.7.1"
 
 
 def _round_rect(c, x1, y1, x2, y2, r, **kw):
@@ -3135,6 +3135,15 @@ class App:
         self._collect, self._collect_rx, self._collect_at = {}, now, now
         if isinstance(self.net, Client):
             self.net.pg_verify, self.net.pg_verify_rx = {}, now
+        else:
+            # pas de réseau pour vider la mémoire partagée assez vite (2 374 drapeaux en ~1 s) : un petit fil s'en charge
+            def drain(end=now + 10):
+                while time.time() < end:
+                    for h, v in POSE.prog_out():
+                        self._collect[h] = v
+                        self._collect_rx = time.time()
+                    time.sleep(0.005)
+            threading.Thread(target=drain, daemon=True).start()
         POSE.request_snapshot()
 
     def collect_result(self, now):
@@ -3142,9 +3151,6 @@ class App:
         if isinstance(self.net, Client) and self.net.pg_verify is not None:
             got, rx = self.net.pg_verify, self.net.pg_verify_rx
         else:
-            for h, v in POSE.prog_out():
-                self._collect[h] = v
-                self._collect_rx = now
             got, rx = self._collect, self._collect_rx
         if (got and now - rx > 1.5) or now - self._collect_at > 10:
             if isinstance(self.net, Client):
