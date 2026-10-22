@@ -75,13 +75,14 @@ static void snapshotTick(uintptr_t mgr) {
     if (!g_snapActive) return;
     uintptr_t buckets = readOr<uintptr_t>(mgr + 0x20);
     uint32_t nb = readOr<uint32_t>(mgr + 0x28);
-    if (!buckets || !nb || nb > 1000000) { g_snapActive = false; return; }
+    if (!buckets || !nb || nb > 1000000) { g_snapActive = false; snapshotDone(g_snapSeen, 0); return; }
     int sent = 0, steps = 0;
-    while (sent < 128 && steps < 4096) {
+    while (sent < 32 && steps < 4096) {   // 32 par image : la mémoire de coop (256) ne déborde jamais
         steps++;
         if (!g_snapNode) {
             if (g_snapBucket >= nb) {
                 g_snapActive = false;
+                snapshotDone(g_snapSeen, g_snapCount);
                 logf("progression : table envoyée (%u drapeaux)", g_snapCount);
                 return;
             }

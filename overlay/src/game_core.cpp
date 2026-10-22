@@ -716,11 +716,14 @@ struct PoseShm {
     uint32_t pgApplied;    // overlay : drapeaux appliqués
     uint32_t pgMissing;    // overlay : drapeaux inconnus de mon jeu
     uint32_t pgSnapReq;    // coop : +1 = envoyer toute ma table de drapeaux (quelqu'un vient de rejoindre)
+    uint32_t pgSnapDone;   // overlay : n° de la dernière demande de table entièrement envoyée (v12)
+    uint32_t pgSnapCount;  // overlay : nombre de drapeaux de cette table
+    uint32_t pgInDone;     // overlay : nombre de drapeaux de l'hôte déjà traités (= pgInHead : tout est appliqué)
 };
 #pragma pack(pop)
 static_assert(sizeof(ShmLocal) == 1056, "ShmLocal");
 static_assert(sizeof(ShmRemote) == 1092, "ShmRemote");
-static_assert(sizeof(PoseShm) == 45868, "PoseShm (coop.py : POSE_SIZE)");
+static_assert(sizeof(PoseShm) == 45880, "PoseShm (coop.py : POSE_SIZE)");
 
 static PoseShm* g_shm = NULL;
 static PoseShm* shm() {
@@ -728,7 +731,7 @@ static PoseShm* shm() {
     if (g_shm) return g_shm;
     if (GetTickCount() - lastTry < 1000) return NULL;
     lastTry = GetTickCount();
-    HANDLE h = OpenFileMappingA(FILE_MAP_ALL_ACCESS, FALSE, "Local\\MECCoopPose_v11");
+    HANDLE h = OpenFileMappingA(FILE_MAP_ALL_ACCESS, FALSE, "Local\\MECCoopPose_v12");
     if (!h) return NULL;
     PoseShm* p = (PoseShm*)MapViewOfFile(h, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(PoseShm));
     if (!p) { CloseHandle(h); return NULL; }
@@ -1062,7 +1065,18 @@ int take(Flag* out, int cap, bool peek) {
     if (!peek) g_inLast += n;
     return n;
 }
-void consumed(int n) { g_inLast += n; }
+void consumed(int n) {
+    g_inLast += n;
+    PoseShm* s = shm();
+    if (s && s->magic == 0x5043454D) s->pgInDone = g_inLast;
+}
+void snapshotDone(uint32_t req, uint32_t count) {
+    PoseShm* s = shm();
+    if (!s || s->magic != 0x5043454D) return;
+    s->pgSnapCount = count;
+    MemoryBarrier();
+    s->pgSnapDone = req;
+}
 uint32_t snapshotRequest() {
     PoseShm* s = shm();
     return (s && s->magic == 0x5043454D) ? *(volatile uint32_t*)&s->pgSnapReq : 0;

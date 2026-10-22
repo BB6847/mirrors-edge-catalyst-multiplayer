@@ -477,7 +477,7 @@ class Game(threading.Thread):
 #  Poses du corps (personnages 3D) : échange avec l'overlay par une 2e mémoire partagée
 #  Ma pose y est écrite par l'overlay ; les poses des autres y sont écrites par coop.
 # ======================================================================================
-POSE_NAME = "Local\\MECCoopPose_v11"
+POSE_NAME = "Local\\MECCoopPose_v12"
 MAX_BONES = 32
 POSE_LOCAL = struct.Struct("<IIIffffI")          # seq, valide, heure, x, y, z, cap, nb d'os (32 o)
 POSE_REMOTE = struct.Struct("<I32sIIIffffI")     # id, nom, n° de paquet, apparence, heure, x, y, z, cap, nb d'os
@@ -515,7 +515,9 @@ PG_IN_HEAD = PG_OUT + 256 * PG_FLAG.size
 PG_IN = PG_IN_HEAD + 4                            # v10 : drapeaux de l'hôte à appliquer (écrits par coop)
 PG_STATS = PG_IN + 512 * PG_FLAG.size             # v10 : appliqués, inconnus (overlay)
 PG_SNAP = PG_STATS + 8                            # v11 : +1 = l'overlay envoie toute ma table de drapeaux
-POSE_SIZE = PG_SNAP + 4
+PG_SNAP_DONE = PG_SNAP + 4                        # v12 : n° de la dernière table entièrement envoyée, puis son nombre
+PG_IN_DONE = PG_SNAP + 12                         # v12 : drapeaux de l'hôte déjà traités par l'overlay
+POSE_SIZE = PG_SNAP + 16
 TRANS_SCALE = 2.05                               # les os bougent d'au plus 2 m par rapport à leur parent
 
 
@@ -719,7 +721,27 @@ class PoseLink:
         struct.pack_into("<I", self.mm, CB_IN_HEAD, head)
 
     def prog_out(self):
-        """Mes changements de drapeaux de progression depuis le dernier appel : [[empreinte, valeur], ...]"""
+        """Mes changements de drapeaux de progression depuis le dernier appel : [[empreinte, valeur], ...]
+        (un petit fil vide la mémoire partagée toutes les 3 ms : une table entière n'y déborde jamais)"""
+        if not getattr(self, "_drain_on", False):
+            self._drain_on, self._buf, self._buf_lock = True, [], threading.Lock()
+
+            def drain():
+                while True:
+                    try:
+                        got = self._read_out()
+                    except Exception:               # noqa: BLE001
+                        got = []
+                    if got:
+                        with self._buf_lock:
+                            self._buf.extend(got)
+                    time.sleep(0.003)
+            threading.Thread(target=drain, daemon=True).start()
+        with self._buf_lock:
+            out, self._buf = self._buf, []
+        return out
+
+    def _read_out(self):
         head = struct.unpack_from("<I", self.mm, PG_OUT_HEAD)[0]
         last = getattr(self, "_pg_last", None)
         if last is None or (head - last) & 0xFFFFFFFF > 256:
@@ -757,8 +779,19 @@ class PoseLink:
         struct.pack_into("<I", self.mm, PG_IN_HEAD, head)
 
     def request_snapshot(self):
-        """Quelqu'un vient de me rejoindre : l'overlay envoie toute ma table de drapeaux (par morceaux)."""
-        struct.pack_into("<I", self.mm, PG_SNAP, (struct.unpack_from("<I", self.mm, PG_SNAP)[0] + 1) & 0xFFFFFFFF)
+        """L'overlay envoie toute ma table de drapeaux (par morceaux). Renvoie le n° de la demande."""
+        req = (struct.unpack_from("<I", self.mm, PG_SNAP)[0] + 1) & 0xFFFFFFFF
+        struct.pack_into("<I", self.mm, PG_SNAP, req)
+        return req
+
+    def snapshot_done(self):
+        """(n° de la dernière table entièrement envoyée par l'overlay, nombre de drapeaux)"""
+        return struct.unpack_from("<II", self.mm, PG_SNAP_DONE)
+
+    def prog_in_all_done(self):
+        """Vrai quand l'overlay a traité tous les drapeaux de l'hôte qu'on lui a donnés."""
+        return (not getattr(self, "_pg_pending", None)
+                and struct.unpack_from("<I", self.mm, PG_IN_DONE)[0] == struct.unpack_from("<I", self.mm, PG_IN_HEAD)[0])
 
     def prog_stats(self):
         """(drapeaux de l'hôte appliqués, drapeaux inconnus de mon jeu)"""
@@ -1036,6 +1069,9 @@ class Client(threading.Thread):
         self.own_rx = 0.0
         self.on_own_flags = None               # appelé avec ma table (l'appli la range avec ma sauvegarde)
         self.own_saved = lambda: False         # vrai si ma table est déjà rangée (rejoindre une 2e fois)
+        self.snapshot_ready = lambda: True     # (l'appli) le jeu est en partie, pas en train de charger
+        self.own_req = None
+        self.own_t = 0.0
         self.pg_verify = None                  # (je rejoins) ma table relue après le rechargement
         self.pg_verify_rx = 0.0
         self.pg_host = ""
@@ -1144,16 +1180,18 @@ class Client(threading.Thread):
                 if self.own_saved():
                     self.own_state = 2
                 elif self.own_state == 0:
-                    self.own_state, self.own_flags, self.own_rx, self.own_asks = 1, {}, now, 1
-                    POSE.request_snapshot()
-                elif not self.own_flags and now - self.own_rx > 3 and self.own_asks < 6:
-                    # l'overlay vient peut-être d'être injecté (sa première image ignore une vieille demande) : on redemande
-                    self.own_rx, self.own_asks = now, self.own_asks + 1
-                    POSE.request_snapshot()
-                elif (self.own_flags and now - self.own_rx > 1.5) or (not self.own_flags and now - self.own_rx > 3):
-                    self.own_state = 2
-                    if self.own_flags and self.on_own_flags:
-                        self.on_own_flags(dict(self.own_flags))
+                    # seulement en pleine partie (pas pendant un chargement) : la table entière, d'un coup
+                    if self.snapshot_ready():
+                        self.own_req = POSE.request_snapshot()
+                        self.own_state, self.own_flags, self.own_t = 1, {}, now
+                else:
+                    done, count = POSE.snapshot_done()
+                    if done == self.own_req and count and len(self.own_flags) >= count:
+                        self.own_state = 2
+                        if self.on_own_flags:
+                            self.on_own_flags(dict(self.own_flags))
+                    elif now - self.own_t > 8:   # (overlay qui vient d'arriver, chargement...) : on redemande
+                        self.own_state = 0
             if (not self.send_progress and self.own_state == 2 and self.pg_asked < 3 and now >= self.pg_ask_at and self.connected
                     and not self.pg_received and self.can_apply()):
                 if not self.pg_asked and POSE:
@@ -1303,7 +1341,7 @@ FRAMES_OFF = SHM_HEAD.size + 8 * SHM_PLAYER.size + 96          # compteur d'imag
 SHM_CAM = struct.Struct("<Qi6iiffii4iI")      # + v5 : drapeaux (radar, pseudos)
 SHM_SIZE = FRAMES_OFF + 4 + SHM_CAM.size
 DLL_NAME = "mec_overlay.dll"
-DLL_COPY = "mec_overlay_v31.dll"
+DLL_COPY = "mec_overlay_v32.dll"
 
 
 def imgui_color(hex_color):
@@ -2211,7 +2249,7 @@ TXT, DIM, FAINT = "#f2f3f5", "#8b929c", "#5a616b"
 RED, RED_HI, RED_LO = "#e3261c", "#ff3b30", "#9e1a13"
 GREEN, ORANGE, GREY = "#4cd964", "#ffb347", "#3a404b"
 FONT = "Segoe UI"
-APP_VERSION = "2.9.0"
+APP_VERSION = "3.0.0"
 
 
 def _round_rect(c, x1, y1, x2, y2, r, **kw):
@@ -3023,13 +3061,17 @@ class App:
         if st["done"]:
             self.progress_verify(st, now)
             return
-        if getattr(POSE, "_pg_pending", None) or now - net.pg_last_rx < 3 or getattr(self, "reloading", None):
+        if (not POSE.prog_in_all_done() or now - net.pg_last_rx < 3 or getattr(self, "reloading", None)
+                or POSE.game_state() != 2):
+            st["calm"] = 0.0
+            return
+        st["calm"] = st.get("calm") or now
+        if now - st["calm"] < 2:               # l'overlay a tout traité, en pleine partie, depuis 2 s
             return
         applied = POSE.prog_stats()[0] - st["applied"]
         if applied <= 0:                       # rien n'a changé : même monde, pas besoin de recharger
-            if now - net.pg_last_rx > 6:
-                st["done"] = True
-                log("Progression de l'hôte : déjà la même, pas de rechargement")
+            st["done"] = True
+            log("Progression de l'hôte : déjà la même, pas de rechargement")
             return
         st["since"] = st["since"] or now
         try:
@@ -3090,9 +3132,10 @@ class App:
         if net.pg_verify is None:
             if now - st["ingame"] > 8:             # la ville est chargée : on relit
                 net.pg_verify, net.pg_verify_rx = {}, now
-                POSE.request_snapshot()
+                st["vreq"] = POSE.request_snapshot()
             return
-        if now - net.pg_verify_rx < 3:
+        done, count = POSE.snapshot_done()
+        if not (done == st.get("vreq") and len(net.pg_verify) >= count) and now - net.pg_verify_rx < 15:
             return
         st["verified"] = True
         mine, host = net.pg_verify, net.pg_host_flags
@@ -3186,15 +3229,14 @@ class App:
         if isinstance(self.net, Client):
             self.net.pg_verify, self.net.pg_verify_rx = {}, now
         else:
-            # pas de réseau pour vider la mémoire partagée assez vite (2 374 drapeaux en ~1 s) : un petit fil s'en charge
-            def drain(end=now + 10):
+            def drain(end=now + 15):
                 while time.time() < end:
                     for h, v in POSE.prog_out():
                         self._collect[h] = v
                         self._collect_rx = time.time()
-                    time.sleep(0.005)
+                    time.sleep(0.01)
             threading.Thread(target=drain, daemon=True).start()
-        POSE.request_snapshot()
+        self._collect_req = POSE.request_snapshot()
 
     def collect_result(self, now):
         """Ma table relue dans le jeu (None tant qu'elle arrive)."""
@@ -3202,7 +3244,8 @@ class App:
             got, rx = self.net.pg_verify, self.net.pg_verify_rx
         else:
             got, rx = self._collect, self._collect_rx
-        if (got and now - rx > 1.5) or now - self._collect_at > 10:
+        done, count = POSE.snapshot_done()
+        if (done == self._collect_req and count and len(got) >= count) or now - self._collect_at > 15:
             if isinstance(self.net, Client):
                 self.net.pg_verify = None
             return dict(got)
@@ -3387,6 +3430,8 @@ class App:
                 # seulement si ma progression est à l'abri (copie + marqueur) : sinon on ne touche à rien
                 self.net.can_apply = lambda: bool(self.cfg.get("save_swapped")) and read_marker() is not None
                 self.net.on_own_flags = self.keep_own_flags
+                self.net.snapshot_ready = lambda: bool(POSE and POSE.game_state() == 2 and self.link and self.link.active
+                                                       and not getattr(self, "reloading", None))
                 self.net.own_saved = lambda: bool(read_marker()) and load_own_flags(read_marker()["backup"]) is not None
             else:
                 self.net = Demo(self.game)
