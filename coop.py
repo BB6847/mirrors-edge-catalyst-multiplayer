@@ -2211,7 +2211,7 @@ TXT, DIM, FAINT = "#f2f3f5", "#8b929c", "#5a616b"
 RED, RED_HI, RED_LO = "#e3261c", "#ff3b30", "#9e1a13"
 GREEN, ORANGE, GREY = "#4cd964", "#ffb347", "#3a404b"
 FONT = "Segoe UI"
-APP_VERSION = "2.6.0"
+APP_VERSION = "2.7.0"
 
 
 def _round_rect(c, x1, y1, x2, y2, r, **kw):
@@ -3095,7 +3095,14 @@ class App:
         if self.game_running() and self.net and getattr(self.net, "others", None) and getattr(self.net, "connected", False):
             return
         if self.game_running():
-            # un rechargement en jeu ne remet pas ma progression (le jeu la garde en mémoire) : il faut fermer le jeu
+            # le jeu garde l'histoire en mémoire : avec ma table (gardée en rejoignant), on la remet dans le jeu puis
+            # on recharge (leave_tick) ; sans elle, il faut fermer le jeu (il relit le fichier au démarrage)
+            if load_own_flags(sw.get("backup")) is not None:
+                if (not getattr(self, "leave", None) and POSE and self.link and self.link.active
+                        and POSE.game_state() == 2 and not getattr(self, "reloading", None)
+                        and time.time() - getattr(self, "reload_failed_at", 0) > 30):
+                    self.start_leave(sw)
+                return
             if not getattr(self, "close_asked", False):
                 self.close_asked = True
                 self.notice("Ferme le jeu pour retrouver ta progression")
@@ -3113,6 +3120,92 @@ class App:
             log("Ma progression a été remise automatiquement")
         except OSError as e:
             self.save_msg = f"Impossible de remettre ta progression : {e}"
+
+    # ---- retour à ma progression SANS quitter le jeu : ma table remise en mémoire, puis fichier + rechargement
+    def start_leave(self, sw):
+        n = self.push_own_flags(sw.get("backup"))
+        own = {h: v for h, v in load_own_flags(sw.get("backup")) or []}
+        self.leave = {"step": "apply", "t": time.time(), "own": own, "backup": sw.get("backup")}
+        self.notice("Retour à ta progression...")
+        self.save_msg = "Retour à ta progression dans le jeu..."
+        log(f"Retour à ma progression : {n} drapeaux remis dans le jeu")
+
+    def start_collect(self):
+        now = time.time()
+        self._collect, self._collect_rx, self._collect_at = {}, now, now
+        if isinstance(self.net, Client):
+            self.net.pg_verify, self.net.pg_verify_rx = {}, now
+        POSE.request_snapshot()
+
+    def collect_result(self, now):
+        """Ma table relue dans le jeu (None tant qu'elle arrive)."""
+        if isinstance(self.net, Client) and self.net.pg_verify is not None:
+            got, rx = self.net.pg_verify, self.net.pg_verify_rx
+        else:
+            for h, v in POSE.prog_out():
+                self._collect[h] = v
+                self._collect_rx = now
+            got, rx = self._collect, self._collect_rx
+        if (got and now - rx > 1.5) or now - self._collect_at > 10:
+            if isinstance(self.net, Client):
+                self.net.pg_verify = None
+            return dict(got)
+        return None
+
+    @staticmethod
+    def compare_flags(what, ref, got):
+        same = sum(1 for h, v in ref.items() if got.get(h) == v)
+        diff = [f"{h:08x}: voulu {v}, jeu {got.get(h)}" for h, v in ref.items() if h in got and got[h] != v]
+        log(f"Vérification ({what}) : {same}/{len(ref)} drapeaux identiques ({len(diff)} différents)"
+            + (" ; ex. " + ", ".join(diff[:10]) if diff else ""))
+
+    def leave_tick(self):
+        lf = getattr(self, "leave", None)
+        if not lf or not POSE:
+            return
+        now = time.time()
+        step = lf["step"]
+        if step == "apply":
+            if getattr(POSE, "_pg_pending", None) or now - lf["t"] < 2.5:
+                return
+            self.start_collect()
+            lf.update(step="verify1", t=now)
+        elif step == "verify1":
+            got = self.collect_result(now)
+            if got is None:
+                return
+            self.compare_flags("ma progression remise en mémoire, avant rechargement", lf["own"], got)
+            try:
+                restore_my_save(lf["backup"], keep_marker=True)
+            except OSError as e:
+                log(f"Impossible de remettre ma sauvegarde : {e}")
+            self.reload_game("Retour à ta progression...", kind="restore")
+            lf.update(step="reload", t=now, ingame=0.0)
+        elif step == "reload":
+            if getattr(self, "reloading", None) or POSE.game_state() != 2:
+                lf["ingame"] = 0.0
+                if now - lf["t"] > 90:
+                    log("Retour à ma progression : le rechargement n'a pas abouti")
+                    self.end_leave()
+                return
+            lf["ingame"] = lf["ingame"] or now
+            if now - lf["ingame"] > 8:
+                self.start_collect()
+                lf.update(step="verify2", t=now)
+        elif step == "verify2":
+            got = self.collect_result(now)
+            if got is None:
+                return
+            self.compare_flags("ma progression après rechargement", lf["own"], got)
+            self.end_leave()
+
+    def end_leave(self):
+        self.leave = None
+        if getattr(self, "quitting", False):
+            if POSE:
+                POSE.set_notice("")
+            self.save()
+            self.root.destroy()
 
     def take_host_save(self):
         host = self.v_ip.get().strip()
@@ -3246,7 +3339,18 @@ class App:
         self.mode = None
 
     def quit(self):
+        if getattr(self, "quitting", False):
+            return
         sw = self.cfg.get("save_swapped")
+        if (sw and self.game_running() and load_own_flags(sw.get("backup")) is not None and POSE and self.link
+                and self.link.active and POSE.game_state() == 2):
+            # retour à ma progression dans le jeu (sans le fermer), puis coop se ferme tout seul
+            self.quitting = True
+            self.stop()
+            self.save_msg = "Retour à ta progression dans le jeu... coop se fermera ensuite."
+            if not getattr(self, "leave", None):
+                self.start_leave(sw)
+            return
         if sw and self.game_running():
             # Un rechargement en jeu ne remet PAS ma progression (le jeu garde l'histoire en mémoire, objets compris :
             # vu le 22/10 avec le grappin). Seul un redémarrage du jeu relit le fichier : on attend que le jeu soit
@@ -3443,6 +3547,7 @@ class App:
 
         self.refresh_teleport()
         self.save_flow()
+        self.leave_tick()
         self.progress_flow()
         self.auto_restore()
         self.refresh_save()

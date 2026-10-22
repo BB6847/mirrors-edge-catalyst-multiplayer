@@ -65,5 +65,5 @@ their own flag table from the game and stores it next to their save backup (`dra
 are applied back in memory before the file is restored and the game reloads. Restarting the game also reads the file.
 
 Tested 22/10: even with the flags applied back, items unlocked by a mission (the grapple) did not come back after an
-in-game reload. Since 2.6.0, getting your own progression back requires closing the game: coop waits for the game to close,
-puts your save back, and the next launch reads it (verified: grapple back).
+in-game reload. 2.6.0 required closing the game to get your progression back. 2.7.0 tries again in game: own flags back in memory,
+then a check (flags read back from the game), the save file, a reload, and a second check, all written to the log.
