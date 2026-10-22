@@ -35,7 +35,11 @@ Flag meanings above are guesses from the recordings, not confirmed.
 
 ## In the mod (2.1.0) / Dans le mod (2.1.0)
 
-Implemented in `overlay/src/progression.cpp` and `coop.py` (packets `"pg"`). Only the host's flags are relayed, and a
+Implemented in `overlay/src/progression.cpp` and `coop.py` (packets `"pg"`). Since 2.2.0, a joining player also asks for
+the host's whole flag table (`"pgreq"`): the host walks its table (buckets at manager+0x20, count at +0x28, records
+chained by +0x28) and sends every (hash, value) in batches, so the world matches even when the save file can't be loaded.
+When a save is loaded, the game restores flags directly from the file (only a few `FlagUpdated` messages appear), which is
+why the table has to be read rather than listened to. Only the host's flags are relayed, and a
 joining player applies them only while their own save is backed up (marker present). Still experimental.
 
 ## Plan for co-op / Plan pour le coop

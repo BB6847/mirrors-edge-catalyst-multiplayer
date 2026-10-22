@@ -55,12 +55,53 @@ static void registerListener() {
     logf("progression : écoute des drapeaux de l'histoire");
 }
 
-// thread serveur : écoute, et drapeaux de l'hôte à appliquer
+// Toute ma table de drapeaux, envoyée par morceaux (quelqu'un vient de me rejoindre) : seaux à +0x20 (nombre à
+// +0x28), chaque seau est une liste d'enregistrements (+0x00 empreinte, +0x18 valeur, +0x28 suivant).
+static uint32_t g_snapSeen = 0;
+static bool g_snapFirst = true, g_snapActive = false;
+static uint32_t g_snapBucket = 0, g_snapCount = 0;
+static uintptr_t g_snapNode = 0;
+static void snapshotTick(uintptr_t mgr) {
+    uint32_t req = snapshotRequest();
+    if (g_snapFirst) { g_snapSeen = req; g_snapFirst = false; }
+    if (req != g_snapSeen) {
+        g_snapSeen = req;
+        g_snapActive = true;
+        g_snapBucket = 0;
+        g_snapNode = 0;
+        g_snapCount = 0;
+        logf("progression : envoi de toute ma table de drapeaux demandé");
+    }
+    if (!g_snapActive) return;
+    uintptr_t buckets = readOr<uintptr_t>(mgr + 0x20);
+    uint32_t nb = readOr<uint32_t>(mgr + 0x28);
+    if (!buckets || !nb || nb > 1000000) { g_snapActive = false; return; }
+    int sent = 0, steps = 0;
+    while (sent < 128 && steps < 4096) {
+        steps++;
+        if (!g_snapNode) {
+            if (g_snapBucket >= nb) {
+                g_snapActive = false;
+                logf("progression : table envoyée (%u drapeaux)", g_snapCount);
+                return;
+            }
+            g_snapNode = readOr<uintptr_t>(buckets + 8ull * g_snapBucket++);
+            continue;
+        }
+        Flag f;
+        if (!read(g_snapNode, f.hash) || !read(g_snapNode + 0x18, f.value)) { g_snapNode = 0; continue; }
+        if (f.hash) { publish(f); sent++; g_snapCount++; }
+        g_snapNode = readOr<uintptr_t>(g_snapNode + 0x28);
+    }
+}
+
+// thread serveur : écoute, table demandée, et drapeaux de l'hôte à appliquer
 void serverTick() {
     static DWORD lastTry = 0;
     if (GetTickCount() - lastTry > 1000) { lastTry = GetTickCount(); registerListener(); }
     uintptr_t mgr = readOr<uintptr_t>(rva(kManagerGlobal));
     if (!mgr || !readOr<uintptr_t>(mgr + 0x20) || level::inFrontEnd()) return;   // pas de partie : on garde pour plus tard
+    snapshotTick(mgr);
     Flag in[64];
     int n = take(in, 64, true);
     if (!n) return;

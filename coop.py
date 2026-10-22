@@ -477,7 +477,7 @@ class Game(threading.Thread):
 #  Poses du corps (personnages 3D) : échange avec l'overlay par une 2e mémoire partagée
 #  Ma pose y est écrite par l'overlay ; les poses des autres y sont écrites par coop.
 # ======================================================================================
-POSE_NAME = "Local\\MECCoopPose_v10"
+POSE_NAME = "Local\\MECCoopPose_v11"
 MAX_BONES = 32
 POSE_LOCAL = struct.Struct("<IIIffffI")          # seq, valide, heure, x, y, z, cap, nb d'os (32 o)
 POSE_REMOTE = struct.Struct("<I32sIIIffffI")     # id, nom, n° de paquet, apparence, heure, x, y, z, cap, nb d'os
@@ -514,7 +514,8 @@ PG_OUT = PG_OUT_HEAD + 4                          # v10 : mes changements de dra
 PG_IN_HEAD = PG_OUT + 256 * PG_FLAG.size
 PG_IN = PG_IN_HEAD + 4                            # v10 : drapeaux de l'hôte à appliquer (écrits par coop)
 PG_STATS = PG_IN + 512 * PG_FLAG.size             # v10 : appliqués, inconnus (overlay)
-POSE_SIZE = PG_STATS + 8
+PG_SNAP = PG_STATS + 8                            # v11 : +1 = l'overlay envoie toute ma table de drapeaux
+POSE_SIZE = PG_SNAP + 4
 TRANS_SCALE = 2.05                               # les os bougent d'au plus 2 m par rapport à leur parent
 
 
@@ -744,6 +745,10 @@ class PoseLink:
             head = (head + 1) & 0xFFFFFFFF
         struct.pack_into("<I", self.mm, PG_IN_HEAD, head)
 
+    def request_snapshot(self):
+        """Quelqu'un vient de me rejoindre : l'overlay envoie toute ma table de drapeaux (par morceaux)."""
+        struct.pack_into("<I", self.mm, PG_SNAP, (struct.unpack_from("<I", self.mm, PG_SNAP)[0] + 1) & 0xFFFFFFFF)
+
     def prog_stats(self):
         """(drapeaux de l'hôte appliqués, drapeaux inconnus de mon jeu)"""
         return struct.unpack_from("<II", self.mm, PG_STATS)
@@ -867,6 +872,15 @@ class Server(threading.Thread):
                                 self.sock.sendto(out, a)
                             except OSError:
                                 pass
+                continue
+            if msg.get("pgreq") and addr in self.players:   # un joueur qui rejoint demande toute la progression
+                out = json.dumps({"n": self.players[addr]["n"], "pgreq": 1}).encode("utf-8")
+                for a in list(self.players):
+                    if a != addr and a[0] == "127.0.0.1":
+                        try:
+                            self.sock.sendto(out, a)
+                        except OSError:
+                            pass
                 continue
             if isinstance(msg.get("pg"), list):         # progression : seulement celle de l'hôte (son coop est ici)
                 if addr in self.players and addr[0] == "127.0.0.1" and len(msg["pg"]) <= 128:
@@ -1003,6 +1017,9 @@ class Client(threading.Thread):
         self.send_progress = False             # j'héberge : ma progression part chez les autres
         self.can_apply = lambda: False         # je rejoins avec le monde de l'hôte : j'applique sa progression
         self.pg_received = 0
+        self.pg_asked = 0                      # demandes de la table complète envoyées
+        self.pg_ask_at = 0.0
+        self.pg_snap_at = 0.0                  # (hôte) dernière table envoyée
 
     def stop(self):
         self.running = False
@@ -1089,6 +1106,15 @@ class Client(threading.Thread):
                 except OSError:
                     pass
             self.pg_resend = [it for it in self.pg_resend if it[2] > 0]
+            # 3a bis) je rejoins avec le monde de l'hôte : je demande toute sa progression (3 fois, à 2 s)
+            if (not self.send_progress and self.pg_asked < 3 and now >= self.pg_ask_at and self.connected
+                    and not self.pg_received and self.can_apply()):
+                self.pg_asked += 1
+                self.pg_ask_at = now + 2.0
+                try:
+                    self.sock.sendto(json.dumps({"n": self.name, "pgreq": 1}).encode("utf-8"), self.addr)
+                except OSError:
+                    pass
             # 3b) mes sons : paquets à part, petits
             snd = POSE.audio_out() if POSE else []
             while snd:
@@ -1126,6 +1152,11 @@ class Client(threading.Thread):
                 elif isinstance(obj, dict) and isinstance(obj.get("cb"), list) and obj.get("n") != self.name:
                     if POSE:
                         POSE.combat_in(str(obj.get("n"))[:16], obj["cb"])
+                elif isinstance(obj, dict) and obj.get("pgreq") and obj.get("n") != self.name:
+                    if POSE and self.send_progress and time.time() - self.pg_snap_at > 5:
+                        self.pg_snap_at = time.time()
+                        POSE.request_snapshot()
+                        log(f"{obj.get('n')} demande toute ma progression : envoi")
                 elif isinstance(obj, dict) and isinstance(obj.get("pg"), list) and obj.get("n") != self.name:
                     if POSE and self.can_apply():
                         POSE.prog_in(obj["pg"])
@@ -1218,7 +1249,7 @@ FRAMES_OFF = SHM_HEAD.size + 8 * SHM_PLAYER.size + 96          # compteur d'imag
 SHM_CAM = struct.Struct("<Qi6iiffii4iI")      # + v5 : drapeaux (radar, pseudos)
 SHM_SIZE = FRAMES_OFF + 4 + SHM_CAM.size
 DLL_NAME = "mec_overlay.dll"
-DLL_COPY = "mec_overlay_v29.dll"
+DLL_COPY = "mec_overlay_v30.dll"
 
 
 def imgui_color(hex_color):
@@ -2112,7 +2143,7 @@ TXT, DIM, FAINT = "#f2f3f5", "#8b929c", "#5a616b"
 RED, RED_HI, RED_LO = "#e3261c", "#ff3b30", "#9e1a13"
 GREEN, ORANGE, GREY = "#4cd964", "#ffb347", "#3a404b"
 FONT = "Segoe UI"
-APP_VERSION = "2.1.0"
+APP_VERSION = "2.2.0"
 
 
 def _round_rect(c, x1, y1, x2, y2, r, **kw):

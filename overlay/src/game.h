@@ -340,6 +340,7 @@ void status(char* out, size_t cap);
 void publish(const Flag& f);                   // -> coop (game_core)
 int take(Flag* out, int cap, bool peek);       // <- coop (game_core)
 void consumed(int n);
+uint32_t snapshotRequest();                    // n° de demande de coop (toute ma table)
 void setStats(uint32_t applied, uint32_t missing);
 }
 
