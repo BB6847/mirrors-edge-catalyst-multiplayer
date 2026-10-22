@@ -102,8 +102,8 @@ void serverTick() {
     uintptr_t mgr = readOr<uintptr_t>(rva(kManagerGlobal));
     if (!mgr || !readOr<uintptr_t>(mgr + 0x20) || level::inFrontEnd()) return;   // pas de partie : on garde pour plus tard
     snapshotTick(mgr);
-    Flag in[64];
-    int n = take(in, 64, true);
+    static Flag in[256];
+    int n = take(in, 256, true);
     if (!n) return;
     typedef void* (*FindFn)(uintptr_t, uint32_t);
     typedef int (*GetFn)(uintptr_t, void*);

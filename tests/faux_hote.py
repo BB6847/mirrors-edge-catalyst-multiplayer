@@ -5,6 +5,9 @@ Il héberge sur ton PC (ta propre sauvegarde sert de « monde de l'hôte », don
 puis, quand ton coop lui demande sa progression, il envoie un drapeau de test qu'il fait changer
 toutes les 3 s. Ton overlay doit l'appliquer dans ton jeu (journal : « drapeau de l'hôte ... appliqué »).
 
+Si tests\\progression_capturee.json existe (créé par faux_pote), il envoie à la place TOUTE cette progression
+capturée plus tôt : test complet (milliers de drapeaux, missions qui changent d'état sur la carte).
+
 Utilisation :
   1. Coop ne doit PAS héberger. Lance ce fichier.
   2. Dans coop : IP = 127.0.0.1, clique Rejoindre (en partie dans le jeu).
@@ -47,6 +50,14 @@ def main():
     addr = ("127.0.0.1", coop.PORT)
     print(f"{NAME} héberge sur ce PC (port {coop.PORT}).")
     print("Dans coop : IP 127.0.0.1, puis Rejoindre (en partie dans le jeu).\n")
+    captured = None
+    try:
+        with open(os.path.join(HERE_T, "progression_capturee.json"), encoding="utf-8") as f:
+            cap = json.load(f)
+        captured = [f for f in cap["flags"] if isinstance(f, list) and len(f) == 2]
+        print(f"Progression capturée le {cap.get('at')} trouvée : {len(captured)} drapeaux seront envoyés.\n")
+    except (OSError, ValueError, KeyError, TypeError):
+        print("Pas de progression capturée : envoi d'un drapeau de test toutes les 3 s.\n")
     asked = False
     value, next_flip, sent = 1, 0.0, 0
     joined = False
@@ -69,7 +80,15 @@ def main():
                     asked = True
         except (socket.timeout, OSError):
             pass
-        if asked and time.time() >= next_flip:
+        if asked and captured is not None:
+            if sent < 2:   # deux fois, au cas où un paquet se perd (appliquer deux fois ne change rien)
+                for i in range(0, len(captured), 100):
+                    sock.sendto(json.dumps({"n": NAME, "pg": captured[i:i + 100]}).encode("utf-8"), addr)
+                    time.sleep(0.01)
+                sent += 1
+                print(f"  progression capturée envoyée ({len(captured)} drapeaux, envoi {sent}/2)")
+                time.sleep(1.0)
+        elif asked and time.time() >= next_flip:
             next_flip = time.time() + 3
             value = 1 - value
             msg = {"n": NAME, "pg": [[TEST_FLAG, value]]}

@@ -135,6 +135,12 @@ def main():
                 pass
         if pg_flags and len(pg_flags) != pg_shown and time.time() - pg_last > 1.5:
             pg_shown = len(pg_flags)
+            try:   # gardée pour faux_hote (test : renvoyer cette progression plus tard)
+                with open(os.path.join(HERE_T, "progression_capturee.json"), "w", encoding="utf-8") as f:
+                    json.dump({"at": time.strftime("%d/%m %H:%M"), "flags": [[h, v] for h, v in pg_flags.items()]}, f)
+                print("     (copiée dans tests\\progression_capturee.json)")
+            except OSError:
+                pass
             print(f"  -> progression reçue : {pg_shown} drapeaux"
                   f" (ex. mission en cours 2563f4f5 = {pg_flags.get(0x2563f4f5, '?')})")
         # comme Internet : 30 envois/s, avec un retard irrégulier

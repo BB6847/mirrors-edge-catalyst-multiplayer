@@ -732,9 +732,20 @@ class PoseLink:
         return out
 
     def prog_in(self, flags):
-        """Drapeaux de l'hôte -> overlay (qui les applique dans mon jeu)."""
+        """Drapeaux de l'hôte -> file d'attente (prog_feed les donne à l'overlay sans déborder sa mémoire)."""
+        if not hasattr(self, "_pg_pending"):
+            self._pg_pending, self._pg_fed = [], 0.0
+        self._pg_pending.extend(flags[:256])
+
+    def prog_feed(self):
+        """Au plus 128 drapeaux toutes les 50 ms (l'overlay en applique jusqu'à 256 par image du jeu)."""
+        pending = getattr(self, "_pg_pending", None)
+        if not pending or time.time() - self._pg_fed < 0.05:
+            return
+        self._pg_fed = time.time()
+        flags, self._pg_pending = pending[:128], pending[128:]
         head = struct.unpack_from("<I", self.mm, PG_IN_HEAD)[0]
-        for f in flags[:256]:
+        for f in flags:
             try:
                 h, v = int(f[0]) & 0xFFFFFFFF, int(f[1])
                 if not -2**31 <= v < 2**31:
@@ -1106,6 +1117,8 @@ class Client(threading.Thread):
                 except OSError:
                     pass
             self.pg_resend = [it for it in self.pg_resend if it[2] > 0]
+            if POSE and hasattr(POSE, "prog_feed"):
+                POSE.prog_feed()
             # 3a bis) je rejoins avec le monde de l'hôte : je demande toute sa progression (3 fois, à 2 s)
             if (not self.send_progress and self.pg_asked < 3 and now >= self.pg_ask_at and self.connected
                     and not self.pg_received and self.can_apply()):
@@ -1249,7 +1262,7 @@ FRAMES_OFF = SHM_HEAD.size + 8 * SHM_PLAYER.size + 96          # compteur d'imag
 SHM_CAM = struct.Struct("<Qi6iiffii4iI")      # + v5 : drapeaux (radar, pseudos)
 SHM_SIZE = FRAMES_OFF + 4 + SHM_CAM.size
 DLL_NAME = "mec_overlay.dll"
-DLL_COPY = "mec_overlay_v30.dll"
+DLL_COPY = "mec_overlay_v31.dll"
 
 
 def imgui_color(hex_color):
@@ -2143,7 +2156,7 @@ TXT, DIM, FAINT = "#f2f3f5", "#8b929c", "#5a616b"
 RED, RED_HI, RED_LO = "#e3261c", "#ff3b30", "#9e1a13"
 GREEN, ORANGE, GREY = "#4cd964", "#ffb347", "#3a404b"
 FONT = "Segoe UI"
-APP_VERSION = "2.2.2"
+APP_VERSION = "2.3.0"
 
 
 def _round_rect(c, x1, y1, x2, y2, r, **kw):
