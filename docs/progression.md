@@ -55,3 +55,11 @@ joining player applies them only while their own save is backed up (marker prese
 - Initial sync: walk the host's flag table and send every (hash, value).
 - This could replace swapping save files. To test carefully: setting flags alone may not start a mission's scripted
   content on the other side; that part may still need the mission invite.
+
+## Important: reloading does not reload flags / Le rechargement ne relit pas les drapeaux
+
+Reloading the save in game (`ResumeSaveGame`) rebuilds the level from the file, but the progression flags stay as they are
+in memory (the progression manager is not reset). So putting a save file back and reloading does NOT give your progression
+back (it also explains being stuck in another player's story earlier). Since 2.5.0, when a player joins, coop first reads
+their own flag table from the game and stores it next to their save backup (`drapeaux.json`); when they leave, those flags
+are applied back in memory before the file is restored and the game reloads. Restarting the game also reads the file.

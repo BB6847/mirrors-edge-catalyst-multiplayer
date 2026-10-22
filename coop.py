@@ -1031,6 +1031,11 @@ class Client(threading.Thread):
         self.pg_last_rx = 0.0
         self.pg_applied_base = None
         self.pg_host_flags = {}                # (je rejoins) les drapeaux reçus de l'hôte
+        self.own_state = 0                     # (je rejoins) ma propre table : 0 à relire, 1 en cours, 2 gardée
+        self.own_flags = {}
+        self.own_rx = 0.0
+        self.on_own_flags = None               # appelé avec ma table (l'appli la range avec ma sauvegarde)
+        self.own_saved = lambda: False         # vrai si ma table est déjà rangée (rejoindre une 2e fois)
         self.pg_verify = None                  # (je rejoins) ma table relue après le rechargement
         self.pg_verify_rx = 0.0
         self.pg_host = ""
@@ -1112,6 +1117,10 @@ class Client(threading.Thread):
                     pass
             # 3a) ma progression (drapeaux de l'histoire) : envoyée 3 fois, appliquer deux fois ne change rien
             pg = POSE.prog_out() if POSE else []
+            if pg and self.own_state == 1:             # ma propre table, avant toute progression de l'hôte
+                for h, v in pg:
+                    self.own_flags[h] = v
+                self.own_rx = now
             if pg and self.pg_verify is not None:      # vérification : ma propre table, comparée à celle de l'hôte
                 for h, v in pg:
                     self.pg_verify[h] = v
@@ -1129,8 +1138,19 @@ class Client(threading.Thread):
             self.pg_resend = [it for it in self.pg_resend if it[2] > 0]
             if POSE and hasattr(POSE, "prog_feed"):
                 POSE.prog_feed()
-            # 3a bis) je rejoins avec le monde de l'hôte : je demande toute sa progression (3 fois, à 2 s)
-            if (not self.send_progress and self.pg_asked < 3 and now >= self.pg_ask_at and self.connected
+            # 3a bis) je rejoins avec le monde de l'hôte : d'abord je garde MA progression (relue dans le jeu : un
+            # rechargement ne la remet pas depuis le fichier), puis je demande toute la sienne (3 fois, à 2 s)
+            if not self.send_progress and self.own_state < 2 and self.connected and self.can_apply() and POSE:
+                if self.own_saved():
+                    self.own_state = 2
+                elif self.own_state == 0:
+                    self.own_state, self.own_flags, self.own_rx = 1, {}, now
+                    POSE.request_snapshot()
+                elif (self.own_flags and now - self.own_rx > 1.5) or now - self.own_rx > 15:
+                    self.own_state = 2
+                    if self.own_flags and self.on_own_flags:
+                        self.on_own_flags(dict(self.own_flags))
+            if (not self.send_progress and self.own_state == 2 and self.pg_asked < 3 and now >= self.pg_ask_at and self.connected
                     and not self.pg_received and self.can_apply()):
                 if not self.pg_asked and POSE:
                     self.pg_applied_base = POSE.prog_stats()[0]   # avant tout drapeau de l'hôte
@@ -2110,6 +2130,20 @@ def clear_marker():
         pass
 
 
+def own_flags_file(backup):
+    """Ma progression telle qu'elle était EN MÉMOIRE dans le jeu quand j'ai rejoint (drapeaux de l'histoire)."""
+    return os.path.join(backup, "drapeaux.json") if backup else None
+
+
+def load_own_flags(backup):
+    try:
+        with open(own_flags_file(backup), encoding="utf-8") as f:
+            flags = json.load(f).get("flags")
+        return [x for x in flags if isinstance(x, list) and len(x) == 2] if isinstance(flags, list) else None
+    except (OSError, ValueError, TypeError, AttributeError):
+        return None
+
+
 def restore_my_save(backup, keep_marker=False):
     """Remet ma progression (les 4 fichiers de la copie). keep_marker : le marqueur reste tant que le jeu n'a
     pas rechargé (sinon une sauvegarde auto du jeu pourrait réécraser la mienne sans que coop le sache)."""
@@ -2173,7 +2207,7 @@ TXT, DIM, FAINT = "#f2f3f5", "#8b929c", "#5a616b"
 RED, RED_HI, RED_LO = "#e3261c", "#ff3b30", "#9e1a13"
 GREEN, ORANGE, GREY = "#4cd964", "#ffb347", "#3a404b"
 FONT = "Segoe UI"
-APP_VERSION = "2.4.2"
+APP_VERSION = "2.5.0"
 
 
 def _round_rect(c, x1, y1, x2, y2, r, **kw):
@@ -2934,6 +2968,11 @@ class App:
                         log(f"Remise de ma progression impossible : {e}")
 
     def progress_flow(self):
+        if POSE and hasattr(POSE, "prog_feed"):
+            POSE.prog_feed()                   # (aussi sans réseau : ma progression remise en partant)
+        self._progress_flow()
+
+    def _progress_flow(self):
         """Celui qui rejoint : une fois toute la progression de l'hôte appliquée, la ville doit être reconstruite
         avec (les points de départ de mission ne sont créés qu'au chargement). Le jeu sauvegarde tout seul 1,5 s
         après un changement de drapeau hors mission ; on attend cette sauvegarde, puis on recharge (une fois)."""
@@ -2974,6 +3013,27 @@ class App:
         elif now - st["since"] > 20:
             st["done"] = True
             log("Progression de l'hôte appliquée, mais le jeu n'a pas sauvegardé (en mission ?) : pas de rechargement")
+
+    def keep_own_flags(self, flags):
+        """Ma table de drapeaux (relue dans le jeu avant la progression de l'hôte) rangée avec ma sauvegarde."""
+        m = read_marker()
+        if not m or load_own_flags(m["backup"]) is not None:
+            return
+        try:
+            with open(own_flags_file(m["backup"]), "w", encoding="utf-8") as f:
+                json.dump({"at": time.strftime("%d/%m %H:%M"), "flags": [[h, v] for h, v in flags.items()]}, f)
+            log(f"Ma progression en mémoire gardée ({len(flags)} drapeaux) avec ma sauvegarde")
+        except OSError as e:
+            log(f"Impossible de garder ma progression en mémoire : {e}")
+
+    def push_own_flags(self, backup):
+        """Remet MA progression dans la mémoire du jeu (un rechargement de fichier ne le fait pas)."""
+        flags = load_own_flags(backup)
+        if not flags or not POSE:
+            return 0
+        for i in range(0, len(flags), 256):
+            POSE.prog_in(flags[i:i + 256])
+        return len(flags)
 
     def progress_verify(self, st, now):
         """Après le rechargement : je relis toute ma table et je la compare à celle de l'hôte (dans le journal)."""
@@ -3033,6 +3093,18 @@ class App:
         if self.game_running():
             if (POSE and self.link and self.link.active and POSE.game_state() == 2 and not getattr(self, "reloading", None)
                     and time.time() - getattr(self, "reload_failed_at", 0) > 30):
+                # d'abord ma progression dans la mémoire du jeu, puis le fichier et le rechargement
+                pushed = getattr(self, "own_pushed", None)
+                if pushed is None:
+                    n = self.push_own_flags(sw.get("backup"))
+                    self.own_pushed = time.time() if n else 0.0
+                    if n:
+                        log(f"Ma progression remise dans le jeu ({n} drapeaux)")
+                        self.notice("Retour à ta progression...")
+                        return
+                elif pushed and (getattr(POSE, "_pg_pending", None) or time.time() - pushed < 3):
+                    return
+                self.own_pushed = None
                 try:
                     # le marqueur reste jusqu'au rechargement réussi (save_flow le retire)
                     restore_my_save(sw.get("backup"), keep_marker=True)
@@ -3045,6 +3117,9 @@ class App:
             if POSE and self.link and self.link.active:
                 if self.menu_ready():
                     try:
+                        # ma progression en mémoire : appliquée dès que la partie reprend (« Continuer »)
+                        if self.push_own_flags(sw.get("backup")):
+                            log("Ma progression sera remise dans le jeu à la reprise de la partie")
                         restore_my_save(sw.get("backup"))
                         self.cfg.pop("save_swapped", None)
                         self.save()
@@ -3165,6 +3240,8 @@ class App:
                 self.net = Client(name, self.cfg["ip"], self.game)
                 # seulement si ma progression est à l'abri (copie + marqueur) : sinon on ne touche à rien
                 self.net.can_apply = lambda: bool(self.cfg.get("save_swapped")) and read_marker() is not None
+                self.net.on_own_flags = self.keep_own_flags
+                self.net.own_saved = lambda: bool(read_marker()) and load_own_flags(read_marker()["backup"]) is not None
             else:
                 self.net = Demo(self.game)
         except OSError as e:
@@ -3199,9 +3276,20 @@ class App:
         if sw and self.game_running() and POSE and self.link and self.link.active and POSE.game_state() == 2:
             # on remet ma progression et le jeu la recharge tout seul, même après la fermeture de coop
             try:
+                self.notice("Retour à ta progression...")
+                if self.push_own_flags(sw.get("backup")):      # ma progression dans la mémoire du jeu d'abord
+                    end = time.time() + 10
+                    while getattr(POSE, "_pg_pending", None) and time.time() < end:
+                        POSE.prog_feed()
+                        self.root.update()
+                        time.sleep(0.05)
+                    end = time.time() + 2
+                    while time.time() < end:
+                        self.root.update()
+                        time.sleep(0.05)
+                    log("Ma progression remise dans le jeu en quittant")
                 restore_my_save(sw.get("backup"), keep_marker=True)
                 self.cfg.pop("save_swapped", None)
-                self.notice("Retour à ta progression...")
                 started = False
                 for tries in range(3):              # on attend que le jeu commence vraiment à recharger
                     POSE.request_menu(1)
