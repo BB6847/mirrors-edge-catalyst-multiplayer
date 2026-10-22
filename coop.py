@@ -1029,6 +1029,7 @@ class Client(threading.Thread):
         self.can_apply = lambda: False         # je rejoins avec le monde de l'hôte : j'applique sa progression
         self.pg_received = 0
         self.pg_last_rx = 0.0
+        self.pg_applied_base = None
         self.pg_host = ""
         self.pg_asked = 0                      # demandes de la table complète envoyées
         self.pg_ask_at = 0.0
@@ -1124,6 +1125,8 @@ class Client(threading.Thread):
             # 3a bis) je rejoins avec le monde de l'hôte : je demande toute sa progression (3 fois, à 2 s)
             if (not self.send_progress and self.pg_asked < 3 and now >= self.pg_ask_at and self.connected
                     and not self.pg_received and self.can_apply()):
+                if not self.pg_asked and POSE:
+                    self.pg_applied_base = POSE.prog_stats()[0]   # avant tout drapeau de l'hôte
                 self.pg_asked += 1
                 self.pg_ask_at = now + 2.0
                 try:
@@ -2160,7 +2163,7 @@ TXT, DIM, FAINT = "#f2f3f5", "#8b929c", "#5a616b"
 RED, RED_HI, RED_LO = "#e3261c", "#ff3b30", "#9e1a13"
 GREEN, ORANGE, GREY = "#4cd964", "#ffb347", "#3a404b"
 FONT = "Segoe UI"
-APP_VERSION = "2.4.0"
+APP_VERSION = "2.4.1"
 
 
 def _round_rect(c, x1, y1, x2, y2, r, **kw):
@@ -2933,7 +2936,8 @@ class App:
                 mt = os.path.getmtime(os.path.join(save_dir(), "PROF_SAVE"))
             except OSError:
                 mt = 0
-            st = self.pg_reload = {"mtime": mt, "applied": POSE.prog_stats()[0], "done": False, "since": 0.0}
+            base = net.pg_applied_base if net.pg_applied_base is not None else POSE.prog_stats()[0]
+            st = self.pg_reload = {"mtime": mt, "applied": base, "done": False, "since": 0.0}
         if st["done"]:
             return
         now = time.time()
