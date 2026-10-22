@@ -2211,7 +2211,7 @@ TXT, DIM, FAINT = "#f2f3f5", "#8b929c", "#5a616b"
 RED, RED_HI, RED_LO = "#e3261c", "#ff3b30", "#9e1a13"
 GREEN, ORANGE, GREY = "#4cd964", "#ffb347", "#3a404b"
 FONT = "Segoe UI"
-APP_VERSION = "2.7.2"
+APP_VERSION = "2.8.0"
 
 
 def _round_rect(c, x1, y1, x2, y2, r, **kw):
@@ -3203,7 +3203,29 @@ class App:
             if got is None:
                 return
             self.compare_flags("ma progression après rechargement", lf["own"], got)
+            # Au chargement, la ville remet certains drapeaux de mission à sa façon (vu le 22/10 : efe44530 repassé
+            # à 0, et la mission d'avant toujours affichée). On les remet une 2e fois, le jeu sauvegarde, et on
+            # recharge encore : la ville est alors construite avec la bonne histoire.
+            diff = [[h, v] for h, v in lf["own"].items() if h in got and got[h] != v]
+            if diff and not lf.get("round2"):
+                POSE.prog_in(diff)
+                try:
+                    mt = os.path.getmtime(os.path.join(save_dir(), "PROF_SAVE"))
+                except OSError:
+                    mt = 0
+                lf.update(step="apply2", t=now, round2=True, mtime=mt)
+                log(f"Retour à ma progression : {len(diff)} drapeaux remis une 2e fois, puis rechargement")
+                return
             self.end_leave()
+        elif step == "apply2":
+            try:
+                mt = os.path.getmtime(os.path.join(save_dir(), "PROF_SAVE"))
+            except OSError:
+                mt = 0
+            if getattr(POSE, "_pg_pending", None) or (mt <= lf["mtime"] and now - lf["t"] < 12):
+                return                      # on attend la sauvegarde que le jeu fait après un changement de drapeau
+            self.reload_game("Retour à ta progression...")
+            lf.update(step="reload", t=now, ingame=0.0)
 
     def end_leave(self):
         self.leave = None
