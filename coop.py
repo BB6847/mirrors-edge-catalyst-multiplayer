@@ -2211,7 +2211,7 @@ TXT, DIM, FAINT = "#f2f3f5", "#8b929c", "#5a616b"
 RED, RED_HI, RED_LO = "#e3261c", "#ff3b30", "#9e1a13"
 GREEN, ORANGE, GREY = "#4cd964", "#ffb347", "#3a404b"
 FONT = "Segoe UI"
-APP_VERSION = "2.7.1"
+APP_VERSION = "2.7.2"
 
 
 def _round_rect(c, x1, y1, x2, y2, r, **kw):
@@ -3211,6 +3211,7 @@ class App:
             if POSE:
                 POSE.set_notice("")
             self.save()
+            self.destroyed = True
             self.root.destroy()
 
     def take_host_save(self):
@@ -3398,6 +3399,8 @@ class App:
 
     # ---------------------------------------------------------------- affichage
     def refresh(self):
+        if getattr(self, "destroyed", False):
+            return
         try:
             self.refresh_once()
         except Exception as e:
