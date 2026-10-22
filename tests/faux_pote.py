@@ -45,6 +45,7 @@ def main():
     last_t = None
     look, look_at = 1, 0.0
     announced = [False]
+    pg_flags, pg_asked, pg_last, pg_shown = {}, False, 0.0, 0
     print(f"Test des missions : dans {FAKE_MISSION_AT} s, {NAME} « lance une mission » ici. Éloigne-toi d'ici d'ici là.\n")
     while True:
         t = time.time() - t0
@@ -88,6 +89,11 @@ def main():
                         o = json.loads(data.decode("utf-8"))
                     except ValueError:
                         continue
+                    if isinstance(o, dict) and isinstance(o.get("pg"), list):   # ta progression (test 2.2)
+                        for f in o["pg"]:
+                            if isinstance(f, list) and len(f) == 2:
+                                pg_flags[f[0]] = f[1]
+                        pg_last = time.time()
                     if isinstance(o, dict) and isinstance(o.get("a"), list):
                         sock.sendto(json.dumps({"n": NAME, "a": o["a"]}).encode("utf-8"), (host, coop.PORT))
             except (socket.timeout, OSError):
@@ -100,6 +106,18 @@ def main():
             if seen < 1e9 and time.time() - seen > 3:
                 print("  pas de réponse : as-tu cliqué « Héberger » dans coop ?")
                 seen = time.time()
+        # test de la progression partagée : 5 s après le début, il demande toute ta progression
+        if not pg_asked and t > 5:
+            pg_asked = True
+            print("  -> demande de toute ta progression (drapeaux de l'histoire)...")
+            try:
+                sock.sendto(json.dumps({"n": NAME, "pgreq": 1}).encode("utf-8"), (host, coop.PORT))
+            except OSError:
+                pass
+        if pg_flags and len(pg_flags) != pg_shown and time.time() - pg_last > 1.5:
+            pg_shown = len(pg_flags)
+            print(f"  -> progression reçue : {pg_shown} drapeaux"
+                  f" (ex. mission en cours 2563f4f5 = {pg_flags.get(0x2563f4f5, '?')})")
         # comme Internet : 30 envois/s, avec un retard irrégulier
         time.sleep(0.033 + random.uniform(-0.01, 0.02))
 
