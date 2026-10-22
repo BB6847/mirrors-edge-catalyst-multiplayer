@@ -1144,9 +1144,13 @@ class Client(threading.Thread):
                 if self.own_saved():
                     self.own_state = 2
                 elif self.own_state == 0:
-                    self.own_state, self.own_flags, self.own_rx = 1, {}, now
+                    self.own_state, self.own_flags, self.own_rx, self.own_asks = 1, {}, now, 1
                     POSE.request_snapshot()
-                elif (self.own_flags and now - self.own_rx > 1.5) or now - self.own_rx > 15:
+                elif not self.own_flags and now - self.own_rx > 3 and self.own_asks < 6:
+                    # l'overlay vient peut-être d'être injecté (sa première image ignore une vieille demande) : on redemande
+                    self.own_rx, self.own_asks = now, self.own_asks + 1
+                    POSE.request_snapshot()
+                elif (self.own_flags and now - self.own_rx > 1.5) or (not self.own_flags and now - self.own_rx > 3):
                     self.own_state = 2
                     if self.own_flags and self.on_own_flags:
                         self.on_own_flags(dict(self.own_flags))
@@ -2207,7 +2211,7 @@ TXT, DIM, FAINT = "#f2f3f5", "#8b929c", "#5a616b"
 RED, RED_HI, RED_LO = "#e3261c", "#ff3b30", "#9e1a13"
 GREEN, ORANGE, GREY = "#4cd964", "#ffb347", "#3a404b"
 FONT = "Segoe UI"
-APP_VERSION = "2.5.0"
+APP_VERSION = "2.5.1"
 
 
 def _round_rect(c, x1, y1, x2, y2, r, **kw):
@@ -3095,6 +3099,15 @@ class App:
                     and time.time() - getattr(self, "reload_failed_at", 0) > 30):
                 # d'abord ma progression dans la mémoire du jeu, puis le fichier et le rechargement
                 pushed = getattr(self, "own_pushed", None)
+                if pushed is None and load_own_flags(sw.get("backup")) is None:
+                    # sans ma table, un rechargement me laisserait l'histoire de l'hôte en mémoire (et le jeu la
+                    # sauvegarderait) : ma progression reviendra quand le jeu sera fermé (il relit le fichier)
+                    if not getattr(self, "close_asked", False):
+                        self.close_asked = True
+                        self.notice("Ferme le jeu pour retrouver ta progression", until_playing=False)
+                        self.save_msg = "Ferme le jeu : ta progression reviendra (coop la remet dès qu'il est fermé)."
+                        log("Ma progression ne peut pas être remise en jeu (pas de table) : fermer le jeu")
+                    return
                 if pushed is None:
                     n = self.push_own_flags(sw.get("backup"))
                     self.own_pushed = time.time() if n else 0.0
@@ -3275,7 +3288,11 @@ class App:
         sw = self.cfg.get("save_swapped")
         if sw and self.game_running() and POSE and self.link and self.link.active and POSE.game_state() == 2:
             # on remet ma progression et le jeu la recharge tout seul, même après la fermeture de coop
+            if load_own_flags(sw.get("backup")) is None:
+                sw = None   # pas de table : on ne recharge pas (voir plus bas, il faut fermer le jeu)
             try:
+                if not sw:
+                    raise OSError("pas de table de progression")
                 self.notice("Retour à ta progression...")
                 if self.push_own_flags(sw.get("backup")):      # ma progression dans la mémoire du jeu d'abord
                     end = time.time() + 10
@@ -3316,7 +3333,7 @@ class App:
                 from tkinter import messagebox
                 ok = messagebox.askyesno(
                     "MEC Coop", f"Ton jeu tourne encore avec la progression de {sw.get('from')}.\n\n"
-                    "Retourne d'abord au menu principal du jeu (ou ferme-le) : coop remettra alors ta progression.\n"
+                    "Ferme d'abord le jeu : coop remettra alors ta progression (le jeu la relit au démarrage).\n"
                     "Si tu quittes coop maintenant, ta progression reviendra seulement la prochaine fois que tu "
                     "ouvriras coop (et si tu lances le jeu sans coop, tu joueras avec celle de l'autre).\n\n"
                     "Quitter quand même ?")
