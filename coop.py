@@ -2211,7 +2211,7 @@ TXT, DIM, FAINT = "#f2f3f5", "#8b929c", "#5a616b"
 RED, RED_HI, RED_LO = "#e3261c", "#ff3b30", "#9e1a13"
 GREEN, ORANGE, GREY = "#4cd964", "#ffb347", "#3a404b"
 FONT = "Segoe UI"
-APP_VERSION = "2.8.0"
+APP_VERSION = "2.8.1"
 
 
 def _round_rect(c, x1, y1, x2, y2, r, **kw):
@@ -2799,12 +2799,27 @@ class App:
         self.save_msg = "Récupération de la progression de l'hôte..."
         self.refresh_save()
         self.root.update()
-        try:
-            name, data = fetch_host_save(host)
-        except (OSError, ValueError) as e:
+        log(f"Demande de la progression de l'hôte à {host}")
+        # dans un fil à part : la fenêtre reste réactive, et au bout de 40 s on abandonne quoi qu'il arrive
+        res = {}
+
+        def fetch():
+            try:
+                res["ok"] = fetch_host_save(host)
+            except Exception as e:                  # noqa: BLE001 (toute erreur = on rejoint sans sa progression)
+                res["err"] = e
+        th = threading.Thread(target=fetch, daemon=True)
+        th.start()
+        end = time.time() + 40
+        while th.is_alive() and time.time() < end:
+            self.root.update()
+            time.sleep(0.05)
+        if "ok" not in res:
+            e = res.get("err") or "pas de réponse en 40 s"
             self.save_msg = f"Progression de l'hôte indisponible ({e}) : tu rejoins avec la tienne."
             log(self.save_msg)
             return
+        name, data = res["ok"]
         log(f"Progression de {name} reçue ({len(data) // 1024} Ko)")
         try:
             installed = open(os.path.join(save_dir(), "PROF_SAVE"), "rb").read()
