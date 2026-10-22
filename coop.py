@@ -1030,6 +1030,9 @@ class Client(threading.Thread):
         self.pg_received = 0
         self.pg_last_rx = 0.0
         self.pg_applied_base = None
+        self.pg_host_flags = {}                # (je rejoins) les drapeaux reçus de l'hôte
+        self.pg_verify = None                  # (je rejoins) ma table relue après le rechargement
+        self.pg_verify_rx = 0.0
         self.pg_host = ""
         self.pg_asked = 0                      # demandes de la table complète envoyées
         self.pg_ask_at = 0.0
@@ -1109,6 +1112,10 @@ class Client(threading.Thread):
                     pass
             # 3a) ma progression (drapeaux de l'histoire) : envoyée 3 fois, appliquer deux fois ne change rien
             pg = POSE.prog_out() if POSE else []
+            if pg and self.pg_verify is not None:      # vérification : ma propre table, comparée à celle de l'hôte
+                for h, v in pg:
+                    self.pg_verify[h] = v
+                self.pg_verify_rx = now
             if pg and self.send_progress:
                 for i in range(0, len(pg), 100):
                     self.pg_resend.append([now, pg[i:i + 100], 3])
@@ -1178,6 +1185,9 @@ class Client(threading.Thread):
                 elif isinstance(obj, dict) and isinstance(obj.get("pg"), list) and obj.get("n") != self.name:
                     if POSE and self.can_apply():
                         POSE.prog_in(obj["pg"])
+                        for f in obj["pg"]:
+                            if isinstance(f, list) and len(f) == 2:
+                                self.pg_host_flags[f[0]] = f[1]
                         if not self.pg_received:
                             log(f"Progression de {obj.get('n')} : premiers drapeaux reçus")
                             self.pg_host = str(obj.get("n"))[:16]
@@ -2163,7 +2173,7 @@ TXT, DIM, FAINT = "#f2f3f5", "#8b929c", "#5a616b"
 RED, RED_HI, RED_LO = "#e3261c", "#ff3b30", "#9e1a13"
 GREEN, ORANGE, GREY = "#4cd964", "#ffb347", "#3a404b"
 FONT = "Segoe UI"
-APP_VERSION = "2.4.1"
+APP_VERSION = "2.4.2"
 
 
 def _round_rect(c, x1, y1, x2, y2, r, **kw):
@@ -2938,9 +2948,10 @@ class App:
                 mt = 0
             base = net.pg_applied_base if net.pg_applied_base is not None else POSE.prog_stats()[0]
             st = self.pg_reload = {"mtime": mt, "applied": base, "done": False, "since": 0.0}
-        if st["done"]:
-            return
         now = time.time()
+        if st["done"]:
+            self.progress_verify(st, now)
+            return
         if getattr(POSE, "_pg_pending", None) or now - net.pg_last_rx < 3 or getattr(self, "reloading", None):
             return
         applied = POSE.prog_stats()[0] - st["applied"]
@@ -2956,12 +2967,37 @@ class App:
             mt = 0
         if mt > max(st["mtime"], net.pg_last_rx) and POSE.game_state() == 2:   # sauvegarde faite APRÈS les derniers
             st["done"] = True
+            st["reloaded_at"] = now
             log(f"Progression de l'hôte appliquée ({applied} drapeaux) et sauvegardée : rechargement de la ville")
             host = net.pg_host or "l'hôte"
             self.reload_game(f"Monde de {host} : chargement...")
         elif now - st["since"] > 20:
             st["done"] = True
             log("Progression de l'hôte appliquée, mais le jeu n'a pas sauvegardé (en mission ?) : pas de rechargement")
+
+    def progress_verify(self, st, now):
+        """Après le rechargement : je relis toute ma table et je la compare à celle de l'hôte (dans le journal)."""
+        net = self.net
+        if st.get("verified") or not st.get("reloaded_at") or getattr(self, "reloading", None):
+            return
+        if POSE.game_state() != 2:
+            st["ingame"] = 0.0
+            return
+        st["ingame"] = st.get("ingame") or now
+        if net.pg_verify is None:
+            if now - st["ingame"] > 8:             # la ville est chargée : on relit
+                net.pg_verify, net.pg_verify_rx = {}, now
+                POSE.request_snapshot()
+            return
+        if now - net.pg_verify_rx < 3:
+            return
+        st["verified"] = True
+        mine, host = net.pg_verify, net.pg_host_flags
+        net.pg_verify = None
+        same = sum(1 for h, v in host.items() if mine.get(h) == v)
+        diff = [f"{h:08x}: hôte {v}, moi {mine.get(h)}" for h, v in host.items() if h in mine and mine[h] != v]
+        log(f"Vérification de la progression après rechargement : {same}/{len(host)} drapeaux identiques à l'hôte"
+            f" ({len(diff)} différents, {len(host) - same - len(diff)} absents)" + (" ; ex. " + ", ".join(diff[:8]) if diff else ""))
 
     def install_host_save(self, name, data, launch):
         try:
