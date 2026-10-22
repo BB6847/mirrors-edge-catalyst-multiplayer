@@ -2211,7 +2211,7 @@ TXT, DIM, FAINT = "#f2f3f5", "#8b929c", "#5a616b"
 RED, RED_HI, RED_LO = "#e3261c", "#ff3b30", "#9e1a13"
 GREEN, ORANGE, GREY = "#4cd964", "#ffb347", "#3a404b"
 FONT = "Segoe UI"
-APP_VERSION = "2.5.1"
+APP_VERSION = "2.6.0"
 
 
 def _round_rect(c, x1, y1, x2, y2, r, **kw):
@@ -3083,8 +3083,8 @@ class App:
         return True
 
     def auto_restore(self):
-        """Ma progression revient toute seule quand je ne rejoins plus personne : tout de suite si le jeu est
-        fermé, ou au menu principal du jeu (elle se charge alors avec « Continuer »)."""
+        """Ma progression revient toute seule quand je ne rejoins plus personne, dès que le jeu est fermé (seul un
+        redémarrage du jeu relit vraiment la sauvegarde : un rechargement en jeu garde l'histoire en mémoire)."""
         sw = self.cfg.get("save_swapped")
         if not sw or self.mode == "join" or time.time() < self.next_save_check:
             if sw and self.mode != "join":
@@ -3095,54 +3095,15 @@ class App:
         if self.game_running() and self.net and getattr(self.net, "others", None) and getattr(self.net, "connected", False):
             return
         if self.game_running():
-            if (POSE and self.link and self.link.active and POSE.game_state() == 2 and not getattr(self, "reloading", None)
-                    and time.time() - getattr(self, "reload_failed_at", 0) > 30):
-                # d'abord ma progression dans la mémoire du jeu, puis le fichier et le rechargement
-                pushed = getattr(self, "own_pushed", None)
-                if pushed is None and load_own_flags(sw.get("backup")) is None:
-                    # sans ma table, un rechargement me laisserait l'histoire de l'hôte en mémoire (et le jeu la
-                    # sauvegarderait) : ma progression reviendra quand le jeu sera fermé (il relit le fichier)
-                    if not getattr(self, "close_asked", False):
-                        self.close_asked = True
-                        self.notice("Ferme le jeu pour retrouver ta progression", until_playing=False)
-                        self.save_msg = "Ferme le jeu : ta progression reviendra (coop la remet dès qu'il est fermé)."
-                        log("Ma progression ne peut pas être remise en jeu (pas de table) : fermer le jeu")
-                    return
-                if pushed is None:
-                    n = self.push_own_flags(sw.get("backup"))
-                    self.own_pushed = time.time() if n else 0.0
-                    if n:
-                        log(f"Ma progression remise dans le jeu ({n} drapeaux)")
-                        self.notice("Retour à ta progression...")
-                        return
-                elif pushed and (getattr(POSE, "_pg_pending", None) or time.time() - pushed < 3):
-                    return
-                self.own_pushed = None
-                try:
-                    # le marqueur reste jusqu'au rechargement réussi (save_flow le retire)
-                    restore_my_save(sw.get("backup"), keep_marker=True)
-                    self.reload_game("Retour à ta progression...", kind="restore")
-                    self.save_msg = "Retour à ta progression : le jeu la recharge..."
-                    log("Ma progression a été remise (rechargement dans le jeu)")
-                except OSError as e:
-                    self.save_msg = f"Impossible de remettre ta progression : {e}"
-                return
-            if POSE and self.link and self.link.active:
-                if self.menu_ready():
-                    try:
-                        # ma progression en mémoire : appliquée dès que la partie reprend (« Continuer »)
-                        if self.push_own_flags(sw.get("backup")):
-                            log("Ma progression sera remise dans le jeu à la reprise de la partie")
-                        restore_my_save(sw.get("backup"))
-                        self.cfg.pop("save_swapped", None)
-                        self.save()
-                        self.save_msg = "Ta progression est revenue ✓ Clique sur « Continuer » dans le jeu."
-                        self.notice("Ta progression est revenue : clique sur Continuer", until_playing=True)
-                        self.restore_menu_asked = 0
-                        log("Ma progression a été remise au menu principal")
-                    except OSError as e:
-                        self.save_msg = f"Impossible de remettre ta progression : {e}"
+            # un rechargement en jeu ne remet pas ma progression (le jeu la garde en mémoire) : il faut fermer le jeu
+            if not getattr(self, "close_asked", False):
+                self.close_asked = True
+                self.notice("Ferme le jeu pour retrouver ta progression")
+                self.save_msg = "Ferme le jeu : ta progression reviendra dès qu'il sera fermé (coop s'en occupe)."
+                log("Je ne rejoins plus personne : ma progression reviendra à la fermeture du jeu")
             return
+        time.sleep(0.5)                              # le jeu vient de se fermer : il a fini d'écrire
+        self.close_asked = False
         try:
             restore_my_save(sw.get("backup"))
             self.cfg.pop("save_swapped", None)
@@ -3286,66 +3247,39 @@ class App:
 
     def quit(self):
         sw = self.cfg.get("save_swapped")
-        if sw and self.game_running() and POSE and self.link and self.link.active and POSE.game_state() == 2:
-            # on remet ma progression et le jeu la recharge tout seul, même après la fermeture de coop
-            if load_own_flags(sw.get("backup")) is None:
-                sw = None   # pas de table : on ne recharge pas (voir plus bas, il faut fermer le jeu)
-            try:
-                if not sw:
-                    raise OSError("pas de table de progression")
-                self.notice("Retour à ta progression...")
-                if self.push_own_flags(sw.get("backup")):      # ma progression dans la mémoire du jeu d'abord
-                    end = time.time() + 10
-                    while getattr(POSE, "_pg_pending", None) and time.time() < end:
-                        POSE.prog_feed()
-                        self.root.update()
-                        time.sleep(0.05)
-                    end = time.time() + 2
-                    while time.time() < end:
-                        self.root.update()
-                        time.sleep(0.05)
-                    log("Ma progression remise dans le jeu en quittant")
-                restore_my_save(sw.get("backup"), keep_marker=True)
-                self.cfg.pop("save_swapped", None)
-                started = False
-                for tries in range(3):              # on attend que le jeu commence vraiment à recharger
-                    POSE.request_menu(1)
-                    end = time.time() + 6
-                    while time.time() < end and not started:
+        if sw and self.game_running():
+            # Un rechargement en jeu ne remet PAS ma progression (le jeu garde l'histoire en mémoire, objets compris :
+            # vu le 22/10 avec le grappin). Seul un redémarrage du jeu relit le fichier : on attend que le jeu soit
+            # fermé, on remet ma sauvegarde, puis coop se ferme.
+            from tkinter import messagebox
+            wait = messagebox.askyesno(
+                "MEC Coop", f"Ton jeu a encore le monde de {sw.get('from')}.\n\n"
+                "Pour retrouver TA progression, il faut fermer le jeu (il la relit au démarrage).\n\n"
+                "Oui : coop attend que tu fermes le jeu, remet ta progression, puis se ferme tout seul.\n"
+                "Non : quitter maintenant (ta progression reviendra au prochain lancement de coop, jeu fermé).")
+            if wait:
+                self.notice("Ferme le jeu pour retrouver ta progression")
+                self.save_msg = "Ferme le jeu : coop remettra ta progression puis se fermera."
+                while self.game_running():
+                    for _ in range(5):
                         self.root.update()
                         time.sleep(0.1)
-                        started = POSE.game_state() != 2
-                    if started:
-                        break
-                if started:
-                    clear_marker()
-                    log("Ma progression a été remise en quittant coop (rechargée dans le jeu)")
-                else:
-                    # le marqueur reste : au prochain lancement de coop, ma progression sera remise
-                    self.notice("")
-                    log("En quittant : le jeu n'a pas rechargé, ma progression sera remise au prochain lancement")
+                time.sleep(1.0)                     # le jeu a fini d'écrire en quittant
+                sw = self.cfg.get("save_swapped")
+                if sw:
+                    try:
+                        restore_my_save(sw.get("backup"))
+                        self.cfg.pop("save_swapped", None)
+                        log("Ma progression a été remise (jeu fermé) en quittant coop")
+                    except OSError as e:
+                        log(f"Impossible de remettre ma progression en quittant : {e}")
+        elif sw:
+            try:
+                restore_my_save(sw.get("backup"))
+                self.cfg.pop("save_swapped", None)
+                log("Ma progression a été remise en quittant coop")
             except OSError as e:
                 log(f"Impossible de remettre ma progression en quittant : {e}")
-            sw = self.cfg.get("save_swapped")
-        if sw:
-            at_menu = bool(POSE and self.link and self.link.active and POSE.game_state() == 1)
-            if self.game_running() and not at_menu:
-                from tkinter import messagebox
-                ok = messagebox.askyesno(
-                    "MEC Coop", f"Ton jeu tourne encore avec la progression de {sw.get('from')}.\n\n"
-                    "Ferme d'abord le jeu : coop remettra alors ta progression (le jeu la relit au démarrage).\n"
-                    "Si tu quittes coop maintenant, ta progression reviendra seulement la prochaine fois que tu "
-                    "ouvriras coop (et si tu lances le jeu sans coop, tu joueras avec celle de l'autre).\n\n"
-                    "Quitter quand même ?")
-                if not ok:
-                    return
-            else:
-                try:
-                    restore_my_save(sw.get("backup"))
-                    self.cfg.pop("save_swapped", None)
-                    log("Ma progression a été remise en quittant coop")
-                except OSError as e:
-                    log(f"Impossible de remettre ma progression en quittant : {e}")
         if POSE:
             POSE.set_notice("")              # sans coop, personne ne l'effacerait (il resterait affiché dans le jeu)
         self.save()

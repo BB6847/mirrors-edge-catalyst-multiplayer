@@ -63,3 +63,7 @@ in memory (the progression manager is not reset). So putting a save file back an
 back (it also explains being stuck in another player's story earlier). Since 2.5.0, when a player joins, coop first reads
 their own flag table from the game and stores it next to their save backup (`drapeaux.json`); when they leave, those flags
 are applied back in memory before the file is restored and the game reloads. Restarting the game also reads the file.
+
+Tested 22/10: even with the flags applied back, items unlocked by a mission (the grapple) did not come back after an
+in-game reload. Since 2.6.0, getting your own progression back requires closing the game: coop waits for the game to close,
+puts your save back, and the next launch reads it (verified: grapple back).
