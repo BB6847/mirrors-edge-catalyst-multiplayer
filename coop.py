@@ -2211,7 +2211,7 @@ TXT, DIM, FAINT = "#f2f3f5", "#8b929c", "#5a616b"
 RED, RED_HI, RED_LO = "#e3261c", "#ff3b30", "#9e1a13"
 GREEN, ORANGE, GREY = "#4cd964", "#ffb347", "#3a404b"
 FONT = "Segoe UI"
-APP_VERSION = "2.8.2"
+APP_VERSION = "2.9.0"
 
 
 def _round_rect(c, x1, y1, x2, y2, r, **kw):
@@ -3070,6 +3070,17 @@ class App:
     def progress_verify(self, st, now):
         """Après le rechargement : je relis toute ma table et je la compare à celle de l'hôte (dans le journal)."""
         net = self.net
+        if st.get("phase") == "apply2":           # 2e passe : on attend la sauvegarde du jeu, puis on recharge
+            try:
+                mt = os.path.getmtime(os.path.join(save_dir(), "PROF_SAVE"))
+            except OSError:
+                mt = 0
+            if getattr(POSE, "_pg_pending", None) or (mt <= st["mtime2"] and now - st["t2"] < 12):
+                return
+            st.update(phase="", verified=False, reloaded_at=now, ingame=0.0)
+            host = net.pg_host or "l'hôte"
+            self.reload_game(f"Monde de {host} : chargement...")
+            return
         if st.get("verified") or not st.get("reloaded_at") or getattr(self, "reloading", None):
             return
         if POSE.game_state() != 2:
@@ -3090,6 +3101,17 @@ class App:
         diff = [f"{h:08x}: hôte {v}, moi {mine.get(h)}" for h, v in host.items() if h in mine and mine[h] != v]
         log(f"Vérification de la progression après rechargement : {same}/{len(host)} drapeaux identiques à l'hôte"
             f" ({len(diff)} différents, {len(host) - same - len(diff)} absents)" + (" ; ex. " + ", ".join(diff[:8]) if diff else ""))
+        # comme au retour : au chargement, la ville remet certains drapeaux de mission à sa façon. Une 2e passe
+        # (drapeaux remis, sauvegarde du jeu, 2e rechargement) donne une carte construite avec l'histoire de l'hôte.
+        todo = [[h, v] for h, v in host.items() if h in mine and mine[h] != v]
+        if todo and not st.get("round2"):
+            POSE.prog_in(todo)
+            try:
+                mt = os.path.getmtime(os.path.join(save_dir(), "PROF_SAVE"))
+            except OSError:
+                mt = 0
+            st.update(round2=True, phase="apply2", t2=now, mtime2=mt)
+            log(f"Progression de l'hôte : {len(todo)} drapeaux remis une 2e fois, puis rechargement")
 
     def install_host_save(self, name, data, launch):
         try:
