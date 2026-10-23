@@ -2202,6 +2202,16 @@ def clear_marker():
         pass
 
 
+# Drapeaux qui changent tout seuls (expérience, heures, ceux que le jeu remet à 0 à chaque chargement) : une
+# différence sur eux ne justifie pas un 2e rechargement.
+VOLATILE_FLAGS = {0x55a782c6, 0xed6f924f, 0x0daa7e29, 0x440bc24b}
+
+
+def volatile_flag(h, want, got):
+    big = 100_000_000                              # une date (secondes depuis 1970) ou un compteur de temps
+    return h in VOLATILE_FLAGS or abs(want) > big or abs(got) > big
+
+
 def own_flags_file(backup):
     """Ma progression telle qu'elle était EN MÉMOIRE dans le jeu quand j'ai rejoint (drapeaux de l'histoire)."""
     return os.path.join(backup, "drapeaux.json") if backup else None
@@ -2279,7 +2289,7 @@ TXT, DIM, FAINT = "#f2f3f5", "#8b929c", "#5a616b"
 RED, RED_HI, RED_LO = "#e3261c", "#ff3b30", "#9e1a13"
 GREEN, ORANGE, GREY = "#4cd964", "#ffb347", "#3a404b"
 FONT = "Segoe UI"
-APP_VERSION = "3.2.1"
+APP_VERSION = "3.3.0"
 
 
 def _round_rect(c, x1, y1, x2, y2, r, **kw):
@@ -3318,7 +3328,7 @@ class App:
             # Au chargement, la ville remet certains drapeaux de mission à sa façon (vu le 22/10 : efe44530 repassé
             # à 0, et la mission d'avant toujours affichée). On les remet une 2e fois, le jeu sauvegarde, et on
             # recharge encore : la ville est alors construite avec la bonne histoire.
-            diff = [[h, v] for h, v in lf["own"].items() if h in got and got[h] != v]
+            diff = [[h, v] for h, v in lf["own"].items() if h in got and got[h] != v and not volatile_flag(h, v, got[h])]
             if diff and not lf.get("round2"):
                 POSE.prog_in(diff)
                 try:
