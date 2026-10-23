@@ -2302,7 +2302,7 @@ TXT, DIM, FAINT = "#f2f3f5", "#8b929c", "#5a616b"
 RED, RED_HI, RED_LO = "#e3261c", "#ff3b30", "#9e1a13"
 GREEN, ORANGE, GREY = "#4cd964", "#ffb347", "#3a404b"
 FONT = "Segoe UI"
-APP_VERSION = "3.3.2"
+APP_VERSION = "3.3.3"
 
 
 def _round_rect(c, x1, y1, x2, y2, r, **kw):
@@ -2937,6 +2937,17 @@ class App:
                 self.link.keepalive()
                 self.root.update()
                 time.sleep(0.1)
+        if (self.game_running() and POSE and self.link and self.link.active and POSE.game_state() == 2
+                and POSE.my_mission()):
+            # rejoindre en pleine mission : le point de réapparition de la mission restait, invalide dans le monde de
+            # l'hôte, et le joueur mourait en boucle (23/10). On attend qu'il en sorte.
+            self.pending_join = time.time() + 1800
+            self.pending_ok = 0.0
+            ms = POSE.my_mission()
+            self.save_msg = (f"Tu es en mission ({mission_title(ms['name'])}) : finis-la ou quitte-la, le monde de "
+                             "l'hôte se chargera tout seul après.")
+            log("Rejoindre : en mission, j'attends qu'elle soit finie")
+            return
         if self.game_running() and POSE and self.link and self.link.active and POSE.game_state() == 2:
             # ma sauvegarde est mise de côté (copie + marqueur) et celle de l'hôte installée, SANS recharger : un
             # rechargement ne change pas l'histoire (le jeu la garde en mémoire). C'est sa progression (drapeaux),
@@ -3094,7 +3105,7 @@ class App:
         if self.link:
             self.link.keepalive()
         ok = bool(POSE and self.link and self.link.active and POSE.game_state() == 2
-                  and not getattr(self, "reloading", None))
+                  and not getattr(self, "reloading", None) and not POSE.my_mission())
         if not ok:
             self.pending_ok = 0.0
             return
@@ -3635,6 +3646,12 @@ class App:
             self.l_tp.config(text="Personne à rejoindre.", fg=ORANGE)
             return
         p = target.get("p")
+        if not p or sum(abs(c) for c in p) < 1.0:
+            # position inconnue (il charge, il est mort...) : on l'envoyait en 0,0,0, dans le vide (23/10)
+            self.l_tp.config(text=f"Position de {name} inconnue pour l'instant, réessaie.", fg=ORANGE)
+            if not self.l_tp.winfo_ismapped():
+                self.l_tp.pack(anchor="w", pady=(6, 0))
+            return
         self.tp_req = POSE.teleport(name_id(name), tuple(p) if p else None)
         self.l_tp.config(text=f"Téléportation vers {name}...", fg=ORANGE)
         if not self.l_tp.winfo_ismapped():
