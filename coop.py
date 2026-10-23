@@ -1106,6 +1106,7 @@ class Client(threading.Thread):
         self.snapshot_ready = lambda: True     # (l'appli) le jeu est en partie, pas en train de charger
         self.own_req = None
         self.own_t = 0.0
+        self.pg_held = {}                      # (je rejoins) drapeaux de l'hôte reçus pendant ma mission
         self.pg_verify = None                  # (je rejoins) ma table relue après le rechargement
         self.pg_verify_rx = 0.0
         self.pg_host = ""
@@ -1206,6 +1207,11 @@ class Client(threading.Thread):
                 except OSError:
                     pass
             self.pg_resend = [it for it in self.pg_resend if it[2] > 0]
+            if self.pg_held and POSE and not POSE.my_mission():
+                held = [[h, v] for h, v in self.pg_held.items()]
+                self.pg_held = {}
+                POSE.prog_in(held)
+                log(f"Fin de mission : {len(held)} drapeaux de l'hôte gardés pendant la mission appliqués")
             if POSE and hasattr(POSE, "prog_feed"):
                 POSE.prog_feed()
             # 3a bis) je rejoins avec le monde de l'hôte : d'abord je garde MA progression (relue dans le jeu : un
@@ -1282,7 +1288,14 @@ class Client(threading.Thread):
                     # seulement une fois MA table gardée : sinon les changements de l'hôte (il les envoie en direct
                     # à tout le monde) se mélangeraient à ma progression avant que je l'aie mise de côté (vu le 22/10)
                     if POSE and self.can_apply() and self.own_state == 2:
-                        POSE.prog_in(obj["pg"])
+                        if self.pg_received and POSE.my_mission():
+                            # en pleine mission : la progression de l'hôte (ses points de passage de la MÊME mission)
+                            # cassait la mienne (Grid Node Anchor, 23/10). Gardée, appliquée à la fin de ma mission.
+                            for f in obj["pg"]:
+                                if isinstance(f, list) and len(f) == 2:
+                                    self.pg_held[f[0]] = f[1]
+                        else:
+                            POSE.prog_in(obj["pg"])
                         for f in obj["pg"]:
                             if isinstance(f, list) and len(f) == 2:
                                 self.pg_host_flags[f[0]] = f[1]
@@ -2308,7 +2321,7 @@ TXT, DIM, FAINT = "#f2f3f5", "#8b929c", "#5a616b"
 RED, RED_HI, RED_LO = "#e3261c", "#ff3b30", "#9e1a13"
 GREEN, ORANGE, GREY = "#4cd964", "#ffb347", "#3a404b"
 FONT = "Segoe UI"
-APP_VERSION = "3.4.0"
+APP_VERSION = "3.4.1"
 
 
 def _round_rect(c, x1, y1, x2, y2, r, **kw):
