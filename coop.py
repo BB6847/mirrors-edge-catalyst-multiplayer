@@ -1273,7 +1273,9 @@ class Client(threading.Thread):
                         POSE.request_snapshot()
                         log(f"{obj.get('n')} demande toute ma progression : envoi")
                 elif isinstance(obj, dict) and isinstance(obj.get("pg"), list) and obj.get("n") != self.name:
-                    if POSE and self.can_apply():
+                    # seulement une fois MA table gardée : sinon les changements de l'hôte (il les envoie en direct
+                    # à tout le monde) se mélangeraient à ma progression avant que je l'aie mise de côté (vu le 22/10)
+                    if POSE and self.can_apply() and self.own_state == 2:
                         POSE.prog_in(obj["pg"])
                         for f in obj["pg"]:
                             if isinstance(f, list) and len(f) == 2:
@@ -2277,7 +2279,7 @@ TXT, DIM, FAINT = "#f2f3f5", "#8b929c", "#5a616b"
 RED, RED_HI, RED_LO = "#e3261c", "#ff3b30", "#9e1a13"
 GREEN, ORANGE, GREY = "#4cd964", "#ffb347", "#3a404b"
 FONT = "Segoe UI"
-APP_VERSION = "3.2.0"
+APP_VERSION = "3.2.1"
 
 
 def _round_rect(c, x1, y1, x2, y2, r, **kw):
@@ -3421,6 +3423,11 @@ class App:
             return
         if mode == "join" and not self.v_ip.get().strip():
             self.error = "Entre l'IP de l'hôte pour rejoindre"
+            return
+        if getattr(self, "leave", None):
+            # le retour à ma progression est en cours (rechargements) : le mélanger avec un nouveau monde
+            # cassait tout (vu le 22/10 au soir)
+            self.error = "Attends la fin du retour à ta progression (quelques secondes), puis réessaie"
             return
         self.stop()
         self.cfg["name"] = name
