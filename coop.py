@@ -3698,6 +3698,8 @@ class App:
         self.refresh_teleport()
         self.save_flow()
         self.leave_tick()
+        if getattr(self, "destroyed", False):   # coop vient de se fermer tout seul (retour terminé)
+            return
         self.progress_flow()
         self.auto_restore()
         self.refresh_save()
