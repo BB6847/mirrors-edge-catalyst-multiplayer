@@ -710,6 +710,16 @@ static DWORD WINAPI InitThread(LPVOID) {
 extern "C" BOOL WINAPI DllMain(HINSTANCE inst, DWORD reason, LPVOID) {
     if (reason == DLL_PROCESS_ATTACH) {
         DisableThreadLibraryCalls(inst);
+        // une autre version de l'overlay est déjà dans ce jeu (mise à jour sans relancer le jeu) : deux
+        // overlays se battraient pour les mêmes crochets. On ne fait rien ; la nouvelle servira au prochain lancement.
+        CreateMutexA(NULL, FALSE, "Local\\MECCoopOverlayLoaded");
+        if (GetLastError() == ERROR_ALREADY_EXISTS) return TRUE;
+        for (int v = 1; v < 64; v++) {
+            char name[32];
+            wsprintfA(name, "mec_overlay_v%d.dll", v);
+            HMODULE h = GetModuleHandleA(name);
+            if (h && h != (HMODULE)inst) return TRUE;
+        }
         game::start();
         HANDLE t = CreateThread(NULL, 0, InitThread, NULL, 0, NULL);
         if (t) CloseHandle(t);
