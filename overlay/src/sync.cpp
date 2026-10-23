@@ -241,7 +241,8 @@ void tick() {
         // sur la position exacte du joueur (pas à côté : un mur, un vide...) ; sinon la position donnée par coop
         PlayerState st;
         uint32_t age = 0;
-        if (g_peer && remote::state(g_peer, st, age) && age <= 2000 && finite(st.pos[0]) && finite(st.pos[1]) && finite(st.pos[2])) {
+        if (g_peer && remote::state(g_peer, st, age) && age <= 2000 && finite(st.pos[0]) && finite(st.pos[1]) && finite(st.pos[2]) &&
+            fabsf(st.pos[0]) + fabsf(st.pos[1]) + fabsf(st.pos[2]) > 1.f) {   // 0,0,0 = position inconnue (vide)
             g_target = transformFromYaw(st.pos, st.yaw);
         } else if (g_useFixed && finite(g_fixed[0]) && finite(g_fixed[1]) && finite(g_fixed[2]) &&
                    fabsf(g_fixed[0]) + fabsf(g_fixed[1]) + fabsf(g_fixed[2]) > 0.01f) {

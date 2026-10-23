@@ -1106,7 +1106,8 @@ class Client(threading.Thread):
         self.snapshot_ready = lambda: True     # (l'appli) le jeu est en partie, pas en train de charger
         self.own_req = None
         self.own_t = 0.0
-        self.pg_held = {}                      # (je rejoins) drapeaux de l'hôte reçus pendant ma mission
+        self.pg_held = {}                      # (je rejoins) drapeaux de l'hôte reçus pendant une mission
+        self.pg_settled = False                # (je rejoins) le monde de l'hôte est installé (après son 1er envoi)
         self.pg_verify = None                  # (je rejoins) ma table relue après le rechargement
         self.pg_verify_rx = 0.0
         self.pg_host = ""
@@ -1120,6 +1121,13 @@ class Client(threading.Thread):
             self.sock.close()
         except OSError:
             pass
+
+    def host_in_mission(self):
+        """L'hôte (celui qui m'envoie sa progression) est-il en mission ? (d'après ce que son coop annonce)"""
+        for o in list(self.others):
+            if o.get("n") == self.pg_host and isinstance(o.get("ms"), list):
+                return True
+        return False
 
     def run(self):
         last_seq = None
@@ -1207,7 +1215,7 @@ class Client(threading.Thread):
                 except OSError:
                     pass
             self.pg_resend = [it for it in self.pg_resend if it[2] > 0]
-            if self.pg_held and POSE and not POSE.my_mission():
+            if self.pg_held and POSE and not POSE.my_mission() and not self.host_in_mission():
                 held = [[h, v] for h, v in self.pg_held.items()]
                 self.pg_held = {}
                 POSE.prog_in(held)
@@ -1288,7 +1296,7 @@ class Client(threading.Thread):
                     # seulement une fois MA table gardée : sinon les changements de l'hôte (il les envoie en direct
                     # à tout le monde) se mélangeraient à ma progression avant que je l'aie mise de côté (vu le 22/10)
                     if POSE and self.can_apply() and self.own_state == 2:
-                        if self.pg_received and POSE.my_mission():
+                        if self.pg_settled and (POSE.my_mission() or self.host_in_mission()):
                             # en pleine mission : la progression de l'hôte (ses points de passage de la MÊME mission)
                             # cassait la mienne (Grid Node Anchor, 23/10). Gardée, appliquée à la fin de ma mission.
                             for f in obj["pg"]:
@@ -1390,7 +1398,7 @@ FRAMES_OFF = SHM_HEAD.size + 8 * SHM_PLAYER.size + 96          # compteur d'imag
 SHM_CAM = struct.Struct("<Qi6iiffii4iI")      # + v5 : drapeaux (radar, pseudos)
 SHM_SIZE = FRAMES_OFF + 4 + SHM_CAM.size
 DLL_NAME = "mec_overlay.dll"
-DLL_COPY = "mec_overlay_v33.dll"
+DLL_COPY = "mec_overlay_v34.dll"
 
 
 def imgui_color(hex_color):
@@ -2321,7 +2329,7 @@ TXT, DIM, FAINT = "#f2f3f5", "#8b929c", "#5a616b"
 RED, RED_HI, RED_LO = "#e3261c", "#ff3b30", "#9e1a13"
 GREEN, ORANGE, GREY = "#4cd964", "#ffb347", "#3a404b"
 FONT = "Segoe UI"
-APP_VERSION = "3.4.1"
+APP_VERSION = "3.5.0"
 
 
 def _round_rect(c, x1, y1, x2, y2, r, **kw):
@@ -3158,6 +3166,7 @@ class App:
             st = self.pg_reload = {"mtime": mt, "applied": base, "done": False, "since": 0.0}
         now = time.time()
         if st["done"]:
+            net.pg_settled = True
             self.progress_verify(st, now)
             return
         if (not POSE.prog_in_all_done() or now - net.pg_last_rx < 3 or getattr(self, "reloading", None)
@@ -3295,6 +3304,15 @@ class App:
                 if (not getattr(self, "leave", None) and POSE and self.link and self.link.active
                         and POSE.game_state() == 2 and not getattr(self, "reloading", None)
                         and time.time() - getattr(self, "reload_failed_at", 0) > 30):
+                    if POSE.my_mission():
+                        # recharger en pleine mission laissait un point de réapparition invalide (23/10)
+                        if not getattr(self, "leave_wait_msg", False):
+                            self.leave_wait_msg = True
+                            self.notice("Finis ou quitte ta mission : ta progression reviendra juste après")
+                            self.save_msg = "Finis ou quitte ta mission : ta progression reviendra juste après."
+                            log("Retour à ma progression : j'attends la fin de la mission")
+                        return
+                    self.leave_wait_msg = False
                     self.start_leave(sw)
                 return
             if not getattr(self, "close_asked", False):
@@ -3579,7 +3597,10 @@ class App:
             self.quitting = True
             self.stop()
             self.save_msg = "Retour à ta progression dans le jeu... coop se fermera ensuite."
-            if not getattr(self, "leave", None):
+            if POSE.my_mission():
+                self.save_msg = "Finis ou quitte ta mission : ta progression reviendra, puis coop se fermera."
+                self.notice("Finis ou quitte ta mission pour retrouver ta progression")
+            elif not getattr(self, "leave", None):
                 self.start_leave(sw)
             return
         if sw and self.game_running():
@@ -3665,6 +3686,16 @@ class App:
             self.l_tp.config(text="Personne à rejoindre.", fg=ORANGE)
             return
         p = target.get("p")
+        why = None
+        if POSE.my_mission():
+            why = "Pas pendant ta mission (pour suivre quelqu'un en mission : son invitation, Alt+M)."
+        elif isinstance(target.get("ms"), list):
+            why = f"{name} est en mission : utilise son invitation (Alt+M) pour aller au départ."
+        if why:
+            self.l_tp.config(text=why, fg=ORANGE)
+            if not self.l_tp.winfo_ismapped():
+                self.l_tp.pack(anchor="w", pady=(6, 0))
+            return
         if not p or sum(abs(c) for c in p) < 1.0:
             # position inconnue (il charge, il est mort...) : on l'envoyait en 0,0,0, dans le vide (23/10)
             self.l_tp.config(text=f"Position de {name} inconnue pour l'instant, réessaie.", fg=ORANGE)
