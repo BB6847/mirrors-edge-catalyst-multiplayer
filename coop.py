@@ -1470,6 +1470,19 @@ class OverlayLink:
         self.error = err or ""
         log(f"Injection overlay dans {mem.pid} : {err or 'OK'}")
 
+    def keepalive(self):
+        """Sans radar (avant Héberger/Rejoindre), personne n'écrivait l'en-tête : la DLL ne comptait pas ses images,
+        coop la croyait absente et le premier Rejoindre ne chargeait pas le monde de l'hôte (23/10)."""
+        if struct.unpack_from("<I", self.mm, 0)[0] == 0x4F43454D:
+            return
+        head = SHM_HEAD.pack(0x4F43454D, 5, 0, 1 if self.wanted else 0, 0.0, 0.0, 0.0, 0.0, 0,
+                             150.0, 1.0, 0, 0, 0)
+        self.seq = (self.seq + 2) & 0xFFFFFFFE
+        struct.pack_into("<I", self.mm, 8, self.seq + 1)
+        self.mm[0:8] = head[0:8]
+        self.mm[12:SHM_HEAD.size] = head[12:]
+        struct.pack_into("<I", self.mm, 8, self.seq)
+
     def write(self, radar):
         cfg, game, net = radar.cfg, radar.game, radar.net
         me = game.pos
@@ -2289,7 +2302,7 @@ TXT, DIM, FAINT = "#f2f3f5", "#8b929c", "#5a616b"
 RED, RED_HI, RED_LO = "#e3261c", "#ff3b30", "#9e1a13"
 GREEN, ORANGE, GREY = "#4cd964", "#ffb347", "#3a404b"
 FONT = "Segoe UI"
-APP_VERSION = "3.3.0"
+APP_VERSION = "3.3.2"
 
 
 def _round_rect(c, x1, y1, x2, y2, r, **kw):
@@ -2921,6 +2934,7 @@ class App:
                 log(f"Injection avant de rejoindre : {e}")
             end = time.time() + 20
             while time.time() < end and not (self.link.active and POSE.game_state() == 2):
+                self.link.keepalive()
                 self.root.update()
                 time.sleep(0.1)
         if self.game_running() and POSE and self.link and self.link.active and POSE.game_state() == 2:
@@ -2938,9 +2952,13 @@ class App:
                                  "jour), puis rejoins. En attendant, tu rejoins avec ta propre progression.")
                 log("Overlay du jeu d'une ancienne version (pas de réponse) : redémarrage du jeu nécessaire une fois")
             else:
-                self.save_msg = ("Entre en partie dans le jeu (pas au menu, pas en chargement), puis reclique "
-                                 "Rejoindre pour avoir le monde de l'hôte. Pour l'instant, tu rejoins avec le tien.")
-                log("Rejoindre : jeu pas en partie, monde de l'hôte non chargé")
+                # souvent : le joueur est dans la fenêtre de coop (le jeu en arrière-plan ne dessine plus). On attend
+                # qu'il retourne en ville, puis on relance Rejoindre tout seul (join_wait_tick)
+                self.pending_join = time.time() + 600
+                self.pending_ok = 0.0
+                self.save_msg = ("Retourne dans le jeu, en ville : le monde de l'hôte se chargera tout seul dès que "
+                                 "tu y es.")
+                log("Rejoindre : jeu pas encore en partie, j'attends que le joueur y soit")
             return
         try:
             swapped = self.cfg.get("save_swapped")
@@ -3063,6 +3081,30 @@ class App:
                         self.save_msg = "Le jeu n'a pas rechargé : tu restes dans ton monde. Réessaie dans quelques secondes."
                     except OSError as e:
                         log(f"Remise de ma progression impossible : {e}")
+
+    def join_wait_tick(self):
+        """Rejoindre cliqué hors partie : dès que le joueur est en ville depuis 3 s, on relance Rejoindre (même
+        chemin que quand il reclique), qui récupère et charge le monde de l'hôte."""
+        until = getattr(self, "pending_join", None)
+        if not until:
+            return
+        if self.mode != "join" or time.time() > until or getattr(self, "leave", None):
+            self.pending_join = None
+            return
+        if self.link:
+            self.link.keepalive()
+        ok = bool(POSE and self.link and self.link.active and POSE.game_state() == 2
+                  and not getattr(self, "reloading", None))
+        if not ok:
+            self.pending_ok = 0.0
+            return
+        if not self.pending_ok:
+            self.pending_ok = time.time()
+            return
+        if time.time() - self.pending_ok >= 3:
+            self.pending_join = None
+            log("Rejoindre : le joueur est en partie, chargement du monde de l'hôte")
+            self.start("join")
 
     def progress_flow(self):
         if POSE and hasattr(POSE, "prog_feed"):
@@ -3494,6 +3536,7 @@ class App:
             self.radar.destroy()
         self.net = self.server = self.radar = None
         self.pg_reload = None
+        self.pending_join = None
         self.mode = None
 
     def quit(self):
@@ -3710,6 +3753,7 @@ class App:
         self.leave_tick()
         if getattr(self, "destroyed", False):   # coop vient de se fermer tout seul (retour terminé)
             return
+        self.join_wait_tick()
         self.progress_flow()
         self.auto_restore()
         self.refresh_save()
