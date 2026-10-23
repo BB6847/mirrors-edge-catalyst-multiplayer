@@ -4,6 +4,9 @@ Un faux joueur qui rejoint TA partie par le réseau, comme un vrai pote (même p
 avec les retards irréguliers d'Internet. Il COPIE TES MOUVEMENTS (ta pose du corps) 4 m à côté de toi :
 tu dois voir un personnage 3D qui bouge comme toi. Sans pose disponible, il court en rond.
 
+Combats : chaque coup que tu portes à un ennemi, il le « porte » aussi (même force) : l'ennemi doit tomber
+deux fois plus vite (journal de l'overlay : « coup reçu appliqué à l'ennemi »).
+
 Utilisation : dans coop, clique "Héberger", puis lance ce fichier.
 """
 import json
@@ -113,6 +116,15 @@ def main():
                             if isinstance(f, list) and len(f) == 2:
                                 pg_flags[f[0]] = f[1]
                         pg_last = time.time()
+                    if isinstance(o, dict) and isinstance(o.get("cb"), list):   # tes coups : il « frappe » aussi
+                        echo = []
+                        for ev in o["cb"]:
+                            if isinstance(ev, list) and len(ev) >= 6:
+                                x, y, z, health, mx, dmg = ev[:6]
+                                echo.append([x, y, z, max(0.0, health - dmg), mx, dmg])   # un 2e coup, aussi fort
+                        if echo:
+                            sock.sendto(json.dumps({"n": NAME, "cb": echo}).encode("utf-8"), (host, coop.PORT))
+                            print(f"  -> combat : {len(echo)} coup(s) rendu(s) par {NAME}")
                     if isinstance(o, dict) and isinstance(o.get("a"), list):
                         sock.sendto(json.dumps({"n": NAME, "a": o["a"]}).encode("utf-8"), (host, coop.PORT))
             except (socket.timeout, OSError):
