@@ -4,6 +4,7 @@ Un faux HÔTE, pour tester seul la progression partagée du côté de celui qui 
 Il héberge sur ton PC (ta propre sauvegarde sert de « monde de l'hôte », donc rien ne change),
 puis, quand ton coop lui demande sa progression, il envoie un drapeau de test qu'il fait changer
 toutes les 3 s. Ton overlay doit l'appliquer dans ton jeu (journal : « drapeau de l'hôte ... appliqué »).
+Son heure du jour part de midi : ton ciel doit passer à midi puis avancer doucement, sans à-coups.
 
 Si tests\\progression_capturee.json existe (créé par faux_pote), il envoie à la place TOUTE cette progression
 capturée plus tôt : test complet (milliers de drapeaux, missions qui changent d'état sur la carte).
@@ -59,11 +60,14 @@ def main():
     except (OSError, ValueError, KeyError, TypeError):
         print("Pas de progression capturée : envoi d'un drapeau de test toutes les 3 s.\n")
     asked = False
+    t0 = time.time()
     value, next_flip, sent = 1, 0.0, 0
     joined = False
     while True:
         # je suis un joueur comme un autre (l'hôte, vu par le serveur)
-        sock.sendto(json.dumps({"n": NAME, "p": None, "l": 2}).encode("utf-8"), addr)
+        # son heure : midi au départ, 24 s de jeu par seconde, donnée une fois par seconde comme un vrai jeu
+        tod = (43200 + 24 * int(time.time() - t0)) % 86400
+        sock.sendto(json.dumps({"n": NAME, "p": None, "l": 2, "tod": tod}).encode("utf-8"), addr)
         try:
             while True:
                 data, _ = sock.recvfrom(65536)
