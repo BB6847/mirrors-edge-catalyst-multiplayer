@@ -2249,7 +2249,7 @@ TXT, DIM, FAINT = "#f2f3f5", "#8b929c", "#5a616b"
 RED, RED_HI, RED_LO = "#e3261c", "#ff3b30", "#9e1a13"
 GREEN, ORANGE, GREY = "#4cd964", "#ffb347", "#3a404b"
 FONT = "Segoe UI"
-APP_VERSION = "3.0.1"
+APP_VERSION = "3.1.0"
 
 
 def _round_rect(c, x1, y1, x2, y2, r, **kw):
@@ -2884,11 +2884,12 @@ class App:
                 self.root.update()
                 time.sleep(0.1)
         if self.game_running() and POSE and self.link and self.link.active and POSE.game_state() == 2:
-            # le jeu sait recharger sa sauvegarde sans quitter (« ResumeSaveGame ») : on installe celle de l'hôte
-            # (la mienne mise de côté) puis on lui demande de la recharger — ~15 s de chargement
+            # ma sauvegarde est mise de côté (copie + marqueur) et celle de l'hôte installée, SANS recharger : un
+            # rechargement ne change pas l'histoire (le jeu la garde en mémoire). C'est sa progression (drapeaux),
+            # appliquée juste après, qui compte ; un seul rechargement suit (progress_flow).
             if self.install_host_save(name, data, launch=False):
-                self.reload_game(f"Chargement du monde de {name}...", kind="join")
-                self.save_msg = f"Chargement du monde de {name} dans le jeu (une quinzaine de secondes)."
+                self.save_msg = f"Réception du monde de {name}..."
+                self.notice(f"Réception du monde de {name}...", until_playing=False)
             return
         if self.game_running():
             # jamais de fermeture du jeu : on rejoint en partie, ou on attend que le joueur y soit
@@ -3058,6 +3059,7 @@ class App:
         if applied <= 0:                       # rien n'a changé : même monde, pas besoin de recharger
             st["done"] = True
             log("Progression de l'hôte : déjà la même, pas de rechargement")
+            self.notice("")
             return
         st["since"] = st["since"] or now
         try:
@@ -3073,6 +3075,7 @@ class App:
         elif now - st["since"] > 20:
             st["done"] = True
             log("Progression de l'hôte appliquée, mais le jeu n'a pas sauvegardé (en mission ?) : pas de rechargement")
+            self.notice("")
 
     def keep_own_flags(self, flags):
         """Ma table de drapeaux (relue dans le jeu avant la progression de l'hôte) rangée avec ma sauvegarde."""
@@ -3133,7 +3136,7 @@ class App:
         # comme au retour : au chargement, la ville remet certains drapeaux de mission à sa façon. Une 2e passe
         # (drapeaux remis, sauvegarde du jeu, 2e rechargement) donne une carte construite avec l'histoire de l'hôte.
         todo = [[h, v] for h, v in host.items() if h in mine and mine[h] != v]
-        if todo and not st.get("round2"):
+        if todo and False:      # (2e passe en rejoignant : retirée, 3 chargements de suite faisaient tout bugger)
             POSE.prog_in(todo)
             try:
                 mt = os.path.getmtime(os.path.join(save_dir(), "PROF_SAVE"))
