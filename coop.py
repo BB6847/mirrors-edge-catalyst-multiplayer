@@ -1046,6 +1046,33 @@ class MissionFollow:
             return
 
 
+class HostClock:
+    """L'heure du jour de l'hôte, prolongée entre deux nouvelles : son jeu ne la donne qu'une fois par seconde
+    (et elle arrive avec le retard du réseau). Sans ça, chez celui qui rejoint, l'heure était remise en arrière
+    de ~20 s de jeu chaque seconde (le ciel « sautait »)."""
+    DAY = 86400.0
+
+    def __init__(self):
+        self.value, self.at, self.rate = None, 0.0, 0.0
+
+    def update(self, tod):
+        now = time.time()
+        if self.value is None or tod != self.value:
+            if self.value is not None and self.at:
+                d = tod - self.value
+                if d < -self.DAY / 2:
+                    d += self.DAY
+                dt = now - self.at
+                r = d / dt if dt > 0.2 else -1
+                # vitesse plausible (le jeu va jusqu'à ~120 s de jeu par seconde) ; sinon : saut (mission, réglage)
+                self.rate = r if 0 < r < 200 else 0.0
+            self.value, self.at = tod, now
+        dt = now - self.at
+        if dt > 1.6:                     # plus de nouvelle : l'hôte est en pause / menu, on n'invente rien
+            return self.value
+        return (self.value + self.rate * dt) % self.DAY
+
+
 class Client(threading.Thread):
     def __init__(self, name, host, game, port=PORT):
         super().__init__(daemon=True)
@@ -1056,6 +1083,7 @@ class Client(threading.Thread):
         self.last_rx = 0
         self.running = True
         self.follow = MissionFollow()
+        self.tod = HostClock()
         self.cb_resend = []
         self.pg_resend = []
         self.send_progress = False             # j'héberge : ma progression part chez les autres
@@ -1235,7 +1263,7 @@ class Client(threading.Thread):
                     self.last_rx = time.time()
                     if POSE:                       # l'heure de l'hôte (pour celui qui rejoint)
                         host = [o for o in self.others if o.get("h") and isinstance(o.get("tod"), (int, float))]
-                        POSE.set_host_tod(float(host[0]["tod"]) if host else -1.0)
+                        POSE.set_host_tod(self.tod.update(float(host[0]["tod"])) if host else -1.0)
                 elif isinstance(obj, dict) and isinstance(obj.get("cb"), list) and obj.get("n") != self.name:
                     if POSE:
                         POSE.combat_in(str(obj.get("n"))[:16], obj["cb"])
@@ -2249,7 +2277,7 @@ TXT, DIM, FAINT = "#f2f3f5", "#8b929c", "#5a616b"
 RED, RED_HI, RED_LO = "#e3261c", "#ff3b30", "#9e1a13"
 GREEN, ORANGE, GREY = "#4cd964", "#ffb347", "#3a404b"
 FONT = "Segoe UI"
-APP_VERSION = "3.1.0"
+APP_VERSION = "3.2.0"
 
 
 def _round_rect(c, x1, y1, x2, y2, r, **kw):
