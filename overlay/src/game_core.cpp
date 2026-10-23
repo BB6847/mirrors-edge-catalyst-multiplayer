@@ -719,11 +719,16 @@ struct PoseShm {
     uint32_t pgSnapDone;   // overlay : n° de la dernière demande de table entièrement envoyée (v12)
     uint32_t pgSnapCount;  // overlay : nombre de drapeaux de cette table
     uint32_t pgInDone;     // overlay : nombre de drapeaux de l'hôte déjà traités (= pgInHead : tout est appliqué)
+    // interactions « touche F » (v13)
+    uint32_t iaOutHead;    // overlay
+    interact::Event iaOut[32];
+    uint32_t iaInHead;     // coop
+    interact::Event iaIn[32];
 };
 #pragma pack(pop)
 static_assert(sizeof(ShmLocal) == 1056, "ShmLocal");
 static_assert(sizeof(ShmRemote) == 1092, "ShmRemote");
-static_assert(sizeof(PoseShm) == 45880, "PoseShm (coop.py : POSE_SIZE)");
+static_assert(sizeof(PoseShm) == 47424, "PoseShm (coop.py : POSE_SIZE)");
 
 static PoseShm* g_shm = NULL;
 static PoseShm* shm() {
@@ -731,7 +736,7 @@ static PoseShm* shm() {
     if (g_shm) return g_shm;
     if (GetTickCount() - lastTry < 1000) return NULL;
     lastTry = GetTickCount();
-    HANDLE h = OpenFileMappingA(FILE_MAP_ALL_ACCESS, FALSE, "Local\\MECCoopPose_v12");
+    HANDLE h = OpenFileMappingA(FILE_MAP_ALL_ACCESS, FALSE, "Local\\MECCoopPose_v13");
     if (!h) return NULL;
     PoseShm* p = (PoseShm*)MapViewOfFile(h, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(PoseShm));
     if (!p) { CloseHandle(h); return NULL; }
@@ -1042,6 +1047,30 @@ int take(Event* out, int cap) {
 }
 }  // namespace combat
 
+namespace interact {
+void publish(const Event& e) {
+    PoseShm* s = shm();
+    if (!s || s->magic != 0x5043454D) return;
+    uint32_t h = s->iaOutHead;
+    s->iaOut[h % 32] = e;
+    MemoryBarrier();
+    s->iaOutHead = h + 1;
+}
+int take(Event* out, int cap) {
+    PoseShm* s = shm();
+    if (!s || s->magic != 0x5043454D) return 0;
+    static uint32_t last = 0;
+    static bool first = true;
+    uint32_t h = *(volatile uint32_t*)&s->iaInHead;
+    if (first) { last = h; first = false; }
+    if (h - last > 32) last = h - 32;
+    int n = 0;
+    MemoryBarrier();
+    while (last != h && n < cap) out[n++] = s->iaIn[last++ % 32];
+    return n;
+}
+}  // namespace interact
+
 namespace progression {
 void publish(const Flag& f) {
     PoseShm* s = shm();
@@ -1129,6 +1158,7 @@ static void onTick(void* world, float dt) {
     if (have) audio::setLocalPos(st.pos);
     research_ai::serverTick();
     combat::tick();
+    interact::tick();
     progression::serverTick();
     ghosts::tick(n - g_levelStartTick);
     // heure du jour et téléportation (demandes de coop.exe)
@@ -1281,6 +1311,7 @@ void start() {
     mission::init();
     research_ai::init();
     combat::init();
+    interact::init();
     progression::init();
     g_logLock.init();
     g_active = true;

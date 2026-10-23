@@ -329,6 +329,18 @@ void publish(const Event& e);                  // -> coop (game_core)
 int take(Event* out, int cap);                 // <- coop (game_core)
 }
 
+namespace interact {
+#pragma pack(push, 1)
+struct Event { float pos[3]; uint32_t id; uint32_t key; uint32_t peer; };   // un signal « touche F » sur une zone
+#pragma pack(pop)
+static_assert(sizeof(Event) == 24, "interact::Event (coop.py)");
+void init();
+void tick();                                   // thread serveur
+void status(char* out, size_t cap);
+void publish(const Event& e);                  // -> coop (game_core)
+int take(Event* out, int cap);                 // <- coop (game_core)
+}  // namespace interact
+
 namespace progression {   // progression de l'histoire (drapeaux) : celle de l'hôte appliquée chez les autres
 #pragma pack(push, 1)
 struct Flag { uint32_t hash; int32_t value; };

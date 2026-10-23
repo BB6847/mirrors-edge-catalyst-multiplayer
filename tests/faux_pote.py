@@ -15,6 +15,7 @@ import os
 import random
 import socket
 import sys
+import threading
 import time
 
 HERE_T = os.path.dirname(os.path.abspath(__file__))
@@ -68,6 +69,17 @@ def main():
     look, look_at = 1, 0.0
     announced = [False]
     pg_flags, pg_asked, pg_last, pg_shown = {}, False, 0.0, 0
+    # test des interactions (perturbateur...) : tes signaux sont gardés ; Entrée = il les « refait » chez toi
+    ia_kept, ia_go = [], [False]
+
+    def wait_enter():
+        while True:
+            try:
+                input()
+            except EOFError:
+                return
+            ia_go[0] = True
+    threading.Thread(target=wait_enter, daemon=True).start()
     print(f"Test des missions : dans {FAKE_MISSION_AT} s, {NAME} « lance une mission » ici. Éloigne-toi d'ici d'ici là.\n")
     while True:
         t = time.time() - t0
@@ -116,6 +128,13 @@ def main():
                             if isinstance(f, list) and len(f) == 2:
                                 pg_flags[f[0]] = f[1]
                         pg_last = time.time()
+                    if isinstance(o, dict) and isinstance(o.get("ia"), list):   # tes signaux « touche F »
+                        new = [ev for ev in o["ia"] if isinstance(ev, list) and len(ev) >= 5
+                               and all(ev[4] != k[4] for k in ia_kept)]
+                        if new:
+                            ia_kept[:] = (ia_kept + new)[-8:]
+                            print(f"  -> interaction reçue : signal {int(new[0][3]):08x} à {new[0][:3]}."
+                                  " Remets la zone comme avant (recharge), éloigne-toi, puis appuie sur Entrée ici.")
                     if isinstance(o, dict) and isinstance(o.get("cb"), list):   # tes coups : il « frappe » aussi
                         echo = []
                         for ev in o["cb"]:
@@ -137,6 +156,18 @@ def main():
             if seen < 1e9 and time.time() - seen > 3:
                 print("  pas de réponse : as-tu cliqué « Héberger » dans coop ?")
                 seen = time.time()
+        if ia_go[0]:
+            ia_go[0] = False
+            if ia_kept:
+                again = [[*ev[:4], random.randrange(1, 2 ** 31)] for ev in ia_kept[-1:]]
+                for _ in range(3):
+                    try:
+                        sock.sendto(json.dumps({"n": NAME, "ia": again}).encode("utf-8"), (host, coop.PORT))
+                    except OSError:
+                        pass
+                print(f"  -> {NAME} refait ton interaction (signal {int(again[0][3]):08x}) : regarde la zone dans le jeu.")
+            else:
+                print("  (aucune interaction reçue pour l'instant : utilise d'abord le perturbateur dans le jeu)")
         # test de la progression partagée : 5 s après le début, il demande toute ta progression
         if not pg_asked and t > 5:
             pg_asked = True

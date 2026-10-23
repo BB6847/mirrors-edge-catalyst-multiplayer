@@ -483,7 +483,7 @@ class Game(threading.Thread):
 #  Poses du corps (personnages 3D) : échange avec l'overlay par une 2e mémoire partagée
 #  Ma pose y est écrite par l'overlay ; les poses des autres y sont écrites par coop.
 # ======================================================================================
-POSE_NAME = "Local\\MECCoopPose_v12"
+POSE_NAME = "Local\\MECCoopPose_v13"
 MAX_BONES = 32
 POSE_LOCAL = struct.Struct("<IIIffffI")          # seq, valide, heure, x, y, z, cap, nb d'os (32 o)
 POSE_REMOTE = struct.Struct("<I32sIIIffffI")     # id, nom, n° de paquet, apparence, heure, x, y, z, cap, nb d'os
@@ -523,7 +523,13 @@ PG_STATS = PG_IN + 512 * PG_FLAG.size             # v10 : appliqués, inconnus (
 PG_SNAP = PG_STATS + 8                            # v11 : +1 = l'overlay envoie toute ma table de drapeaux
 PG_SNAP_DONE = PG_SNAP + 4                        # v12 : n° de la dernière table entièrement envoyée, puis son nombre
 PG_IN_DONE = PG_SNAP + 12                         # v12 : drapeaux de l'hôte déjà traités par l'overlay
-POSE_SIZE = PG_SNAP + 16
+IA_EVENT = struct.Struct("<3fIII")               # v13 : un signal « touche F » sur une zone (position, signal, n°, joueur)
+IA_OUT_HEAD = PG_SNAP + 16
+IA_OUT = IA_OUT_HEAD + 4
+IA_IN_HEAD = IA_OUT + 32 * IA_EVENT.size
+IA_IN = IA_IN_HEAD + 4
+POSE_SIZE = IA_IN + 32 * IA_EVENT.size
+assert POSE_SIZE == 47424, POSE_SIZE              # = sizeof(PoseShm) de l'overlay
 TRANS_SCALE = 2.05                               # les os bougent d'au plus 2 m par rapport à leur parent
 
 
@@ -726,6 +732,42 @@ class PoseLink:
             head = (head + 1) & 0xFFFFFFFF
         struct.pack_into("<I", self.mm, CB_IN_HEAD, head)
 
+    def interact_out(self):
+        """Mes signaux « touche F » (perturbateur, portes...) depuis le dernier appel : [[x, y, z, signal, n°], ...]"""
+        head = struct.unpack_from("<I", self.mm, IA_OUT_HEAD)[0]
+        last = getattr(self, "_ia_last", None)
+        if last is None or (head - last) & 0xFFFFFFFF > 32:
+            last = head if last is None else (head - 32) & 0xFFFFFFFF
+        out = []
+        while last != head:
+            v = IA_EVENT.unpack_from(self.mm, IA_OUT + (last % 32) * IA_EVENT.size)
+            out.append([round(v[0], 2), round(v[1], 2), round(v[2], 2), int(v[3]), int(v[4])])
+            last = (last + 1) & 0xFFFFFFFF
+        self._ia_last = last
+        return out
+
+    def interact_in(self, name, events):
+        """Signaux d'un autre joueur -> overlay (même zone chez moi). Chaque signal n'est donné qu'une fois (il arrive
+        3 fois par le réseau ; deux fois le perturbateur pourrait rallumer un ventilateur)."""
+        pid = name_id(name)
+        seen = self.__dict__.setdefault("_ia_seen", {})
+        head = struct.unpack_from("<I", self.mm, IA_IN_HEAD)[0]
+        for ev in events[:8]:
+            try:
+                x, y, z = (float(v) for v in ev[:3])
+                sig, key = int(ev[3]) & 0xFFFFFFFF, int(ev[4]) & 0xFFFFFFFF
+                if not all(math.isfinite(v) for v in (x, y, z)) or (pid, key) in seen:
+                    continue
+                seen[(pid, key)] = time.time()
+                IA_EVENT.pack_into(self.mm, IA_IN + (head % 32) * IA_EVENT.size, x, y, z, sig, key, pid)
+            except (ValueError, TypeError, IndexError, struct.error):
+                continue
+            head = (head + 1) & 0xFFFFFFFF
+        struct.pack_into("<I", self.mm, IA_IN_HEAD, head)
+        if len(seen) > 500:
+            for k in sorted(seen, key=seen.get)[:250]:
+                seen.pop(k, None)
+
     def prog_out(self):
         """Mes changements de drapeaux de progression depuis le dernier appel : [[empreinte, valeur], ...]
         (un petit fil vide la mémoire partagée toutes les 3 ms : une table entière n'y déborde jamais)"""
@@ -913,6 +955,16 @@ class Server(threading.Thread):
                 else:
                     self._serve_safe(msg, addr)
                 continue
+            if isinstance(msg.get("ia"), list):         # signaux « touche F » (perturbateur...) : relayés tout de suite
+                if addr in self.players and len(msg["ia"]) <= 8:
+                    out = json.dumps({"n": self.players[addr]["n"], "ia": msg["ia"]}).encode("utf-8")
+                    for a in list(self.players):
+                        if a != addr:
+                            try:
+                                self.sock.sendto(out, a)
+                            except OSError:
+                                pass
+                continue
             if isinstance(msg.get("cb"), list):         # des coups sur les ennemis : relayés tout de suite
                 if addr in self.players and len(msg["cb"]) <= 16:
                     out = json.dumps({"n": self.players[addr]["n"], "cb": msg["cb"]}).encode("utf-8")
@@ -1091,6 +1143,7 @@ class Client(threading.Thread):
         self.follow = MissionFollow()
         self.tod = HostClock()
         self.cb_resend = []
+        self.ia_resend = []
         self.pg_resend = []
         self.send_progress = False             # j'héberge : ma progression part chez les autres
         self.can_apply = lambda: False         # je rejoins avec le monde de l'hôte : j'applique sa progression
@@ -1194,6 +1247,20 @@ class Client(threading.Thread):
                     self.sock.sendto(json.dumps({"n": self.name, "cb": cb[:16]}).encode("utf-8"), self.addr)
                 except OSError:
                     pass
+            # 3 bis) mes signaux « touche F » : envoyés 3 fois (0, 80, 240 ms), donnés une seule fois chez l'autre
+            ia = POSE.interact_out() if POSE and hasattr(POSE, "interact_out") else []
+            if ia:
+                self.ia_resend.append([now + 0.08, ia[:8], 2])
+            for item in [it for it in self.ia_resend if now >= it[0]]:
+                item[2] -= 1
+                item[0] = now + 0.16
+                ia = ia + item[1] if ia else item[1]
+            self.ia_resend = [it for it in self.ia_resend if it[2] > 0]
+            if ia:
+                try:
+                    self.sock.sendto(json.dumps({"n": self.name, "ia": ia[:8]}).encode("utf-8"), self.addr)
+                except OSError:
+                    pass
             # 3a) ma progression (drapeaux de l'histoire) : envoyée 3 fois, appliquer deux fois ne change rien
             pg = POSE.prog_out() if POSE else []
             if pg and self.own_state == 1:             # ma propre table, avant toute progression de l'hôte
@@ -1284,6 +1351,10 @@ class Client(threading.Thread):
                     if POSE:                       # l'heure de l'hôte (pour celui qui rejoint)
                         host = [o for o in self.others if o.get("h") and isinstance(o.get("tod"), (int, float))]
                         POSE.set_host_tod(self.tod.update(float(host[0]["tod"])) if host else -1.0)
+                elif isinstance(obj, dict) and isinstance(obj.get("ia"), list) and obj.get("n") != self.name:
+                    if POSE and hasattr(POSE, "interact_in"):
+                        POSE.interact_in(str(obj.get("n"))[:16], obj["ia"])
+                        log(f"Interaction de {obj.get('n')} reçue : {obj['ia'][:2]}")
                 elif isinstance(obj, dict) and isinstance(obj.get("cb"), list) and obj.get("n") != self.name:
                     if POSE:
                         POSE.combat_in(str(obj.get("n"))[:16], obj["cb"])
@@ -1398,7 +1469,7 @@ FRAMES_OFF = SHM_HEAD.size + 8 * SHM_PLAYER.size + 96          # compteur d'imag
 SHM_CAM = struct.Struct("<Qi6iiffii4iI")      # + v5 : drapeaux (radar, pseudos)
 SHM_SIZE = FRAMES_OFF + 4 + SHM_CAM.size
 DLL_NAME = "mec_overlay.dll"
-DLL_COPY = "mec_overlay_v34.dll"
+DLL_COPY = "mec_overlay_v35.dll"
 
 
 def imgui_color(hex_color):
@@ -2329,7 +2400,7 @@ TXT, DIM, FAINT = "#f2f3f5", "#8b929c", "#5a616b"
 RED, RED_HI, RED_LO = "#e3261c", "#ff3b30", "#9e1a13"
 GREEN, ORANGE, GREY = "#4cd964", "#ffb347", "#3a404b"
 FONT = "Segoe UI"
-APP_VERSION = "3.5.0"
+APP_VERSION = "3.6.0"
 
 
 def _round_rect(c, x1, y1, x2, y2, r, **kw):
