@@ -326,6 +326,7 @@ void tick();                                   // thread serveur
 void noteSpawner(const char* blueprint, void* spawner);
 void levelChanged();
 void status(char* out, size_t cap);
+void requestSpawn();                           // test : un garde devant moi (bouton de coop)
 void publish(const Event& e);                  // -> coop (game_core)
 int take(Event* out, int cap);                 // <- coop (game_core)
 }

@@ -1469,7 +1469,7 @@ FRAMES_OFF = SHM_HEAD.size + 8 * SHM_PLAYER.size + 96          # compteur d'imag
 SHM_CAM = struct.Struct("<Qi6iiffii4iI")      # + v5 : drapeaux (radar, pseudos)
 SHM_SIZE = FRAMES_OFF + 4 + SHM_CAM.size
 DLL_NAME = "mec_overlay.dll"
-DLL_COPY = "mec_overlay_v37.dll"
+DLL_COPY = "mec_overlay_v38.dll"
 
 
 def imgui_color(hex_color):
@@ -2400,7 +2400,7 @@ TXT, DIM, FAINT = "#f2f3f5", "#8b929c", "#5a616b"
 RED, RED_HI, RED_LO = "#e3261c", "#ff3b30", "#9e1a13"
 GREEN, ORANGE, GREY = "#4cd964", "#ffb347", "#3a404b"
 FONT = "Segoe UI"
-APP_VERSION = "3.6.2"
+APP_VERSION = "3.6.3"
 
 
 def _round_rect(c, x1, y1, x2, y2, r, **kw):
@@ -2898,6 +2898,8 @@ class App:
         row2.pack(fill="x", pady=(8, 0))
         RoundButton(row2, "Jeu : recharger la sauvegarde", lambda: self.ask_menu(1), "ghost", height=30, width=220,
                     size=9).pack(side="left")
+        RoundButton(row2, "Faire apparaître un garde", self.spawn_enemy, "ghost", height=30, width=180,
+                    size=9).pack(side="left", padx=(8, 0))
         self.label(page, "Personnages 3D et sons : méthode du mod MECMP (licence MIT).", 8, FAINT).pack(
             pady=(0, 6))
 
@@ -2906,6 +2908,13 @@ class App:
         if POSE and POSE.game_state() == 2 and kind == 1:
             POSE.request_menu(kind)
             log("Rechargement de la sauvegarde demandé (bouton)" if kind else "Retour au menu principal demandé (bouton)")
+
+    def spawn_enemy(self):
+        """Test des combats : un garde apparaît devant moi (overlay : spawner d'ennemis du niveau)."""
+        if POSE and POSE.game_state() == 2:
+            POSE.request_menu(2)
+            log("Garde demandé (bouton)")
+            self.notice("Un garde arrive devant toi...")
 
     def open_logs(self):
         try:

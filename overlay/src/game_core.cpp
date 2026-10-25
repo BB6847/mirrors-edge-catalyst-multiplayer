@@ -1273,7 +1273,13 @@ static DWORD WINAPI MonitorThread(LPVOID) {
                 static bool firstMenu = true;
                 uint32_t mr = s->menuReq;
                 if (firstMenu) { lastMenu = mr; firstMenu = false; }
-                if (mr != lastMenu) { lastMenu = mr; if (s->gameState == 2) menu::request((int)s->menuKind); }
+                if (mr != lastMenu) {
+                    lastMenu = mr;
+                    if (s->gameState == 2) {
+                        if (s->menuKind == 2) combat::requestSpawn();      // bouton « Faire apparaître un garde »
+                        else menu::request((int)s->menuKind);
+                    }
+                }
             }
         }
         menu::monitorTick();

@@ -225,12 +225,66 @@ static int enemies(void** out, int cap) {
     return k;
 }
 
+// ---- test : un garde apparaît devant moi (bouton de coop) : un spawner d'ennemis du niveau, comme les fantômes
+static volatile LONG g_spawnReq = 0;
+void requestSpawn() { InterlockedExchange(&g_spawnReq, 1); logf("combat : garde demandé"); }
+
+static void spawnOne() {
+    void* me = level::playerCharacter();
+    LinearTransform mt;
+    if (!me || !readEntityTransform(me, mt)) { logf("combat : garde : pas de personnage"); return; }
+    void* sps[256];
+    int n;
+    {
+        Guard g(g_m);
+        n = g_nsp;
+        memcpy(sps, g_spawners, n * sizeof(void*));
+    }
+    // un spawner de garde de mêlée de préférence (AIMelee), sinon un tireur (AIRanged), sinon le premier
+    void* best = NULL;
+    int bestScore = -1;
+    for (int i = 0; i < n; i++) {
+        if (!level::spawnerAlive(sps[i])) continue;
+        uintptr_t sd = readOr<uintptr_t>((uintptr_t)sps[i] + Spawner_Data);
+        uintptr_t bp = sd ? readOr<uintptr_t>(sd + ReferenceObjectData_Blueprint) : 0;
+        char name[128] = {0};
+        if (!bp || !readCString(readOr<uintptr_t>(bp + Asset_Name), name, sizeof(name))) continue;
+        int score = strstr(name, "AIMelee/AIMelee") ? 3 : strstr(name, "AIMelee") ? 2 : strstr(name, "AIRanged") ? 1 : 0;
+        if (score > bestScore) { bestScore = score; best = sps[i]; }
+    }
+    if (!best) { logf("combat : garde : aucun spawner de garde connu dans ce niveau"); return; }
+    // 5 m devant moi, tourné vers moi
+    LinearTransform t = mt;
+    for (int a = 0; a < 3; a++) {
+        t.trans[a] = mt.trans[a] + mt.forward[a] * 5.f;
+        t.forward[a] = -mt.forward[a];
+        t.right[a] = -mt.right[a];
+    }
+    SpawnInfo info;
+    memset(&info, 0, sizeof(info));
+    info.transform = t;
+    info.unk58 = -1;
+    info.busId = -1;
+    info.unk60 = 1;
+    info.useTransform = 1;
+    uint8_t* enabled = (uint8_t*)best + Spawner_Enabled;
+    uint8_t oldEnabled = *enabled;
+    *enabled = 1;
+    typedef void* (*SpawnFn)(void*, SpawnInfo*);
+    void* ch = (*(SpawnFn**)best)[Vtbl_SpawnerSpawn / 8](best, &info);
+    *enabled = oldEnabled;
+    if (ch) setTransform(ch, t);
+    logf("combat : garde %s (spawner %p, personnage %p) à %.1f %.1f %.1f", ch ? "apparu" : "PAS apparu", best, ch,
+         t.trans[0], t.trans[1], t.trans[2]);
+}
+
 struct Pending { Event e; DWORD at; };
 static Pending g_pending[32];
 static int g_npending = 0;
 
 // thread du jeu (serveur) : mes coups -> coop ; les coups des autres -> mes ennemis
 void tick() {
+    if (InterlockedExchange(&g_spawnReq, 0)) spawnOne();
     if (!g_installed) return;
     Event out[32];
     int n = 0;
