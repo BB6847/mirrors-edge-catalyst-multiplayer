@@ -23,13 +23,18 @@ static const uintptr_t TI_PamServerHealthComponent = 0x142853f60;
 // santé de base) ; sa case 0x100 (0x143995fa0) prévient l'IA puis appelle directement celle de base.
 static const uintptr_t Vtbl_PamServerAIHealthComponent = 0x141c56398, Fn_PamAIApplyDamage = 0x143995fa0;
 static const uintptr_t TI_PamServerAIHealthComponent = 0x14285adc0;
+// Faith (et les personnages des joueurs) : PamServerHumanHealthComponent, sa case 0x100 (0x143923ea0) appelle
+// directement celle de base (0x143923a90) : rien ne passait par nos crochets (test du 25/10, alerte « vie critique »
+// sans aucune ligne de combat). Étape 1 : noter ces coups (qui est touché, combien).
+static const uintptr_t Vtbl_PamServerHumanHealthComponent = 0x141c40700, Fn_PamHumanApplyDamage = 0x143923ea0;
 static const size_t Slot_ApplyDamage = 0x100, Slot_SetHealth = 0xf0;
 static const size_t Health_Value = 0x20, Health_Max = 0x24, DamageInfo_Amount = 0x88;
 static const float kMatchRadius = 10.f;
 static const DWORD kPendingMs = 5000, kScanEveryMs = 3000;
 
 typedef void* (*ApplyFn)(void* comp, void* out, void* info);
-static ApplyFn g_orig = NULL, g_origAI = NULL;
+static ApplyFn g_orig = NULL, g_origAI = NULL, g_origHuman = NULL;
+static volatile LONG g_humanSeen = 0;
 static volatile bool g_installed = false;
 static Lock g_m;
 
@@ -81,6 +86,23 @@ static void* hookAI(void* comp, void* out, void* info) {
     note(comp, info, before, true);
     return r;
 }
+static void* hookHuman(void* comp, void* out, void* info) {
+    float before = readOr<float>((uintptr_t)comp + Health_Value, -1.f);
+    float dmg = info ? readOr<float>((uintptr_t)info + DamageInfo_Amount, 0.f) : 0.f;
+    void* r = g_origHuman(comp, out, info);
+    DWORD err = GetLastError();
+    float after = readOr<float>((uintptr_t)comp + Health_Value, -1.f);
+    uintptr_t owner = ownerOf((uintptr_t)comp);
+    if (InterlockedIncrement(&g_humanSeen) <= 60) {
+        const char* who = !owner ? "?" : owner == (uintptr_t)level::playerCharacter() ? "MOI (Faith)"
+                        : ghosts::isGhostCharacter((void*)owner) ? "FANTÔME (l'autre joueur)" : "autre humain";
+        logf("combat : coup reçu par %s : santé %.1f -> %.1f (dégâts %.1f, type %d)", who, before, after, dmg,
+             info ? readOr<int>((uintptr_t)info + 0xc0, -1) : -1);
+    }
+    SetLastError(err);
+    return r;
+}
+
 static bool isHealthComp(uintptr_t comp) {
     uintptr_t vt = readOr<uintptr_t>(comp);
     return vt == rva(Vtbl_PamServerAIHealthComponent) || vt == rva(Vtbl_PamServerHealthComponent);
@@ -175,6 +197,11 @@ bool install() {
     }
     g_orig = (ApplyFn)rva(Fn_PamApplyDamage);
     g_origAI = (ApplyFn)rva(Fn_PamAIApplyDamage);
+    uintptr_t slotH = rva(Vtbl_PamServerHumanHealthComponent) + Slot_ApplyDamage;
+    if (readOr<uintptr_t>(slotH) == rva(Fn_PamHumanApplyDamage)) {
+        g_origHuman = (ApplyFn)rva(Fn_PamHumanApplyDamage);
+        if (patchPointer(slotH, (uintptr_t)&hookHuman, NULL)) logf("combat : coups reçus par Faith suivis");
+    }
     if (!patchPointer(slotAI, (uintptr_t)&hookAI, NULL)) return false;
     patchPointer(slot, (uintptr_t)&hook, NULL);
     g_installed = true;
