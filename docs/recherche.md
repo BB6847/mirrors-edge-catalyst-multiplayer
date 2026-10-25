@@ -90,3 +90,9 @@ Lu dans `multi/mecmp-0.9.0-beta.3/src/game/engine.h` et le CHANGELOG (à crédit
   (PamClientReplayRecordingComponent, créateur 0x141c491c8) avant le chargement du niveau.
 - Écran « Ton écho » et carte : garder le personnage du jeu en dernier dans les listes du spawner, côté client aussi ;
   relancer la pose des fantômes après la carte.
+
+## Marqueurs sur la carte (essai abandonné le 25/10)
+
+- Repris de MECMP (PresenceInfoManager, voir plus haut) : rien ne s'affiche, même avec un faux profil au pseudo. Les
+  serveurs EA du jeu sont hors ligne et la carte semble exiger un vrai profil en ligne. Coupé dans coop (réglage
+  `map_players`, faux par défaut). Piste si on y revient : dessiner nos propres marqueurs par-dessus la carte (overlay).

@@ -2459,7 +2459,7 @@ TXT, DIM, FAINT = "#f2f3f5", "#8b929c", "#5a616b"
 RED, RED_HI, RED_LO = "#e3261c", "#ff3b30", "#9e1a13"
 GREEN, ORANGE, GREY = "#4cd964", "#ffb347", "#3a404b"
 FONT = "Segoe UI"
-APP_VERSION = "3.7.3"
+APP_VERSION = "3.7.4"
 
 
 def _round_rect(c, x1, y1, x2, y2, r, **kw):
@@ -3735,7 +3735,7 @@ class App:
         if POSE:
             POSE.set_role({"host": 1, "join": 2}.get(mode, 3), self.cfg.get("sync_tod", True))
             if hasattr(POSE, "set_map_players"):
-                POSE.set_map_players(self.cfg.get("map_players", True))   # les autres sur la carte du jeu
+                POSE.set_map_players(self.cfg.get("map_players", False))  # carte du jeu : ne marche pas sans les serveurs EA (25/10), coupé
         self.radar = Radar(self.root, self.game, self.net, self.cfg, self.link)
         log(f"Démarrage mode {mode} en tant que {name}")
 
