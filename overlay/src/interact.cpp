@@ -23,7 +23,7 @@ static const uintptr_t Fn_ReadInput = 0x143a6f4a0, Fn_ReadInputEnd = 0x143a6f710
 static const uintptr_t Fn_EventCtor = 0x143395700, Fn_EventDtor = 0x142d4e9a0, Fn_Release = 0x142a3a9e0;
 static const uintptr_t Fn_WorldTransform = 0x143a68a80;
 static const size_t Trigger_Inner = 0xd0, Trigger_ListNode = 0x1b0, Slot_Fire = 0x88, Event_Id = 0x08, Event_Sender = 0x20;
-static const float kMatchRadius = 2.f;
+static const float kMatchRadius = 2.f, kNearMe = 40.f;
 
 typedef uintptr_t (*FireFn)(void*, void*, void*, void*);
 static FireFn g_origFire = NULL;
@@ -151,6 +151,18 @@ void tick() {
             if (InterlockedIncrement(&g_missed) <= 20)
                 logf("interactions : signal %08x reçu pour %.1f %.1f %.1f, aucune zone à moins de %.0f m (%d zones)", e.id,
                      e.pos[0], e.pos[1], e.pos[2], kMatchRadius, guard);
+            continue;
+        }
+        // seulement si je suis près de la zone : les départs de mission passent aussi par ces zones, et un signal
+        // rejoué de loin lancerait la mission chez moi n'importe où (vu en lisant le code le 25/10)
+        void* me = level::playerCharacter();
+        LinearTransform mx;
+        if (!me || !readEntityTransform(me, mx)) continue;
+        float dm = 0;
+        for (int a = 0; a < 3; a++) dm += (mx.trans[a] - e.pos[a]) * (mx.trans[a] - e.pos[a]);
+        if (dm > kNearMe * kNearMe) {
+            if (InterlockedIncrement(&g_missed) <= 20)
+                logf("interactions : signal %08x reçu, zone à %.0f m de moi : pas rejoué (trop loin)", e.id, sqrtf(dm));
             continue;
         }
         bool ok = fire(best + Trigger_Inner, e.id);

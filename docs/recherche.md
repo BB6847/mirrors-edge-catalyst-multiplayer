@@ -1,0 +1,61 @@
+# Notes de recherche (code du jeu, 1.0.3.47248)
+
+Lu avec Ghidra 12.1.4 (sans interface) sur l'image mémoire du jeu remise en exe (`_mod_coop/mec_dump_pe.exe` : l'exe du
+dossier du jeu est chiffré sur le disque), avec les types de GridNode (`gridnode-reflected.json`) et ses enregistrements.
+Adresses en VA (base 0x140000000).
+
+## Zones « touche F » (perturbateur, départs de mission…)
+
+- `PamServerSpatialEntryInputTriggerEntity` (vtable 0x141c78c10, 1088 octets) : zone placée dans la ville.
+  `+0xd0` déclencheur, `+0x1b0` maillon de la liste de toutes les zones ; tête de liste :
+  `*(TI 0x142863740 + (*( *(0x1425469e0) + 0x28) + 6) * 16)`.
+- Données : `PamSpatialEntryInputTriggerEntityData` (Enabled, DisableOnTrigger/Release/HoldDown, Triggers,
+  LookAtRadius…), chaque `PamEntryInputTriggerInfo` (EntryInputAction, SetTriggerDescriptionOn/OffHash…).
+- Le composant d'interaction du joueur (`PamServerEntityInteractionComponent`, vtable 0x141c78e40) choisit la zone
+  (0x143a6fc50), puis `0x143a6f4a0(déclencheur, ServerPlayer)` lit les touches de chaque entrée : appui
+  (+0x10) → case 0x68 puis signal `[données+0x24]` ; maintien (+0x25) → case 0x70 puis `[+0x28]` ; relâché (+0x12)
+  → case 0x78 puis `[+0x2c]`. Le signal : `0x143395700(évt, joueur, n°)` (40 octets, vtable 0x141b51ce8,
+  référence au joueur en +0x20), envoyé par la case **0x88** du déclencheur, puis libéré (référence −1,
+  `0x142a3a9e0` à zéro ; `0x142d4e9a0`).
+- Position monde d'une entité spatiale : `0x143a68a80(entité, LinearTransform*)` (tient compte du parent +0x420).
+- Ventilateur + perturbateur : signal `1f51d15d` → `SchematicChannelEntity` → animation « arrêt » (ANT bool
+  f218e074), effet, son et invite coupés ; puis `26c98945`.
+- Les départs de mission semblent passer par ces zones : ne rejouer un signal reçu que si on est près (overlay : 40 m).
+
+## Gardes : qui peut être pris pour cible
+
+- `AIPlayerEnableAsTargetMessage` (catégorie « AI » 0x0059722d, type 0x63c0f317, vtable 0x141b5d758, 64 octets ;
+  constructeur 0x144674e80) : `+0x30` = **personnage +0x250** (son joueur, nul pour l'IA et les fantômes), `+0x38`
+  = oui/non.
+- Envoyé par `0x143382600(objet, oui/non)` pour chaque personnage de la liste `objet+0x148..+0x150` qui a un joueur,
+  en direct (`0x142a39770(gestionnaire serveur, msg)`, message sur la pile). Appelé depuis 0x143387b44 et 0x14338d933.
+- Donc les gardes ciblent des **joueurs** (`ServerPlayer`), pas des personnages : un fantôme n'a pas de joueur.
+  Pistes : trouver l'écouteur de ce message (comparaison du type masquée : rien de direct dans le code) ;
+  ou donner aux fantômes un vrai `ServerPlayer` (proxy de joueur).
+- Gestionnaires d'IA connus : `ServerAIEnemyManager` (0x141a5e720), `ServerAISensingManager` (0x141a5e268),
+  `PamAISensingManager` (0x141c568a8 ; case 4 = 0x143992450 : événement 0x467b0e51 → ajoute un stimulus à sa
+  liste +0x70, position + type 3). Factions : `FactionId` (Neutral, US, RUS, MEC).
+
+## Missions, points de passage, réapparition
+
+- Entités : `PamServerMissionManagerEntity`, `PamServerMissionEntity` (données : Mission, FlagsSetWhenReplaying,
+  ReloadFromLastCheckpointOnFail, EnableCityAlertDuringMission, StreamIn/Out…), `PamServerMissionStartPointEntity`,
+  `PamServerMissionCheckpointEntity`, `PamServerCheckpointEntity`, `PamServerMissionStatusEntity`.
+- Messages : `ServerGameplayCheckpointActivatedMessage`, `ServerGameplayCheckpointTriggeredMessage`,
+  `ServerPlayerRespawnMessage`, `ServerMissionObjectiveCompletedMessage`, `PamProgressionActiveMissionMessage`,
+  `PamProgressionMissionUpdatedMessage`.
+- Liens drapeaux ↔ missions dans les données : `PamProgressionMission` (CompletedFlag, AvailableFlag,
+  MissionDescription…), `PamMissionDescription.FlagNameHash` (à lire en jeu : ce sont des données du niveau).
+
+## Progression (drapeaux)
+
+- `setFlag` 0x1439e3d90 : 27 appels, surtout des entités de la logique des niveaux (0x1439d6680, 0x1439d68f0,
+  0x1439d9510, 0x1439de2c0 : met plusieurs drapeaux d'un coup) et 0x143a7xxxx. Sauvegarde : 0x1439e0e40, appelée
+  seulement par la mise à jour 0x1439d8680. Le chargement depuis le fichier n'est pas encore trouvé (piste pour
+  retrouver sa progression en un seul rechargement).
+
+## Outils
+
+- `ghidra/dec.sh sortie.txt 0xADRESSE…` (dans l'espace de travail de Claude) : décompile en ~5 s par appel.
+- REA (Claude Desktop) : chaque appel est limité à 60 s et une analyse annulée est perdue ; inutilisable pour
+  analyser l'exe entier, utile pour de petits fichiers.

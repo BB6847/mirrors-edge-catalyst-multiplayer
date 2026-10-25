@@ -36,6 +36,11 @@ static bool post(void* spawner, bool enable) {
 
 // thread serveur, à chaque tour ; role : 3 = test solo (seul cas essayé pour l'instant)
 void tick(int role) {
+    // DÉSACTIVÉ (25/10) : le jeu met dans ce message l'objet JOUEUR du personnage (personnage +0x250, envoyé
+    // par 0x143382600 pour chaque personnage qui en a un, en direct par 0x142a39770), pas son spawner ; les
+    // fantômes n'ont pas de joueur. Envoyer un spawner à la place risquait un plantage. Voir docs/recherche.md.
+    (void)role;
+    return;
     if (role != 3) return;
     void* sp = level::ghostSpawner();
     if (!sp || !level::spawnerAlive(sp) || sp == g_doneFor) return;
