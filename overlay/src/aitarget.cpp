@@ -38,10 +38,35 @@ static void enableAsTarget(uintptr_t player, bool on) {
     ((void (*)(void*))rva(Fn_MsgDtor))(msg);
 }
 
+// qui écoute les messages « AI » du serveur ? (arbre des catégories du gestionnaire : 0x142a39770)
+static void dumpListeners(uint32_t category, const char* what) {
+    uintptr_t ctx = readOr<uintptr_t>(rva(kServerGameContext));
+    uintptr_t mgr = ctx ? readOr<uintptr_t>(ctx + 0x10) : 0;
+    if (!mgr) return;
+    uintptr_t head = mgr + 0x88, node = readOr<uintptr_t>(mgr + 0x98), best = head;
+    for (int g = 0; node && g < 64; g++) {
+        if (readOr<int>(node + 0x20) < (int)category) node = readOr<uintptr_t>(node);
+        else { best = node; node = readOr<uintptr_t>(node + 8); }
+    }
+    if (best == head || (int)category < readOr<int>(best + 0x20)) { logf("gardes : aucun écouteur %s", what); return; }
+    typedef uintptr_t (*NextFn)(uintptr_t);
+    NextFn next = (NextFn)rva(0x142a34820);
+    int n = 0;
+    for (uintptr_t e = readOr<uintptr_t>(best + 0x38); e && e != best + 0x30 && n < 40; e = next(e), n++) {
+        uintptr_t obj = readOr<uintptr_t>(e + 0x20);
+        uintptr_t vt = obj ? readOr<uintptr_t>(obj) : 0;
+        uintptr_t fn = vt ? readOr<uintptr_t>(vt) : 0;
+        uintptr_t b = moduleBase() - 0x140000000ull;
+        logf("gardes : écouteur %s n°%d : objet %llx vt=%llx fonction=%llx filtre=%x", what, n, (unsigned long long)obj,
+             (unsigned long long)(vt ? vt - b : 0), (unsigned long long)(fn ? fn - b : 0), readOr<uint32_t>(e + 0x34));
+    }
+}
+
 static void attach(void* ch) {
     uintptr_t ctx = readOr<uintptr_t>(rva(kServerGameContext));
     uintptr_t mgr = ctx ? readOr<uintptr_t>(ctx + 0x68) : 0;
     if (!mgr) { logf("gardes : ESSAI, pas de gestionnaire des joueurs"); return; }
+    dumpListeners(0x0059722du, "AI");
     int places = readOr<int>(mgr + 0x10);
     uint32_t reserved = readOr<uint32_t>(mgr + 0x910);
     uintptr_t h0 = readOr<uintptr_t>(mgr + 0x268), h1 = readOr<uintptr_t>(mgr + 0x270);
