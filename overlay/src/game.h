@@ -250,6 +250,7 @@ void levelChanged();
 bool shownPosition(uint32_t id, float out[3]);
 void* clientCharacter(uint32_t peer);   // personnage client du fantôme montré (0 = aucun)
 bool isGhostCharacter(void* serverCharacter);
+void* firstServerCharacter();          // personnage serveur du 1er fantôme (0 = aucun)
 void status(char* out, size_t cap);
 }  // namespace ghosts
 

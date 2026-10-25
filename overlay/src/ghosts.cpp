@@ -601,6 +601,12 @@ bool isGhostCharacter(void* ch) {
     return false;
 }
 
+void* firstServerCharacter() {
+    Guard lk(g_m);
+    for (size_t i = 0; i < g_count; i++) if (g_ghosts[i].character) return g_ghosts[i].character;
+    return NULL;
+}
+
 void* clientCharacter(uint32_t peer) {
     Guard lk(g_m);
     for (size_t i = 0; i < g_count; i++) {

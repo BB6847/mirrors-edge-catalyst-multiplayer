@@ -30,11 +30,25 @@ Adresses en VA (base 0x140000000).
 - Envoyé par `0x143382600(objet, oui/non)` pour chaque personnage de la liste `objet+0x148..+0x150` qui a un joueur,
   en direct (`0x142a39770(gestionnaire serveur, msg)`, message sur la pile). Appelé depuis 0x143387b44 et 0x14338d933.
 - Donc les gardes ciblent des **joueurs** (`ServerPlayer`), pas des personnages : un fantôme n'a pas de joueur.
-  Pistes : trouver l'écouteur de ce message (comparaison du type masquée : rien de direct dans le code) ;
-  ou donner aux fantômes un vrai `ServerPlayer` (proxy de joueur).
+  Piste suivie : lui en créer un (voir « Joueurs supplémentaires »).
+- `PamServerCharacterProxyEntity` (doublure de personnage pour la logique des niveaux : données Template,
+  UseLocalPlayerCharacter) : sur l'événement 0x1d8fac4e, appelle `0x143382600` (active/désactive le ciblage).
 - Gestionnaires d'IA connus : `ServerAIEnemyManager` (0x141a5e720), `ServerAISensingManager` (0x141a5e268),
   `PamAISensingManager` (0x141c568a8 ; case 4 = 0x143992450 : événement 0x467b0e51 → ajoute un stimulus à sa
   liste +0x70, position + type 3). Factions : `FactionId` (Neutral, US, RUS, MEC).
+
+## Joueurs supplémentaires (comme les « bots » de Battlefield)
+
+- Gestionnaire des joueurs du serveur : `[*(0x14253d670) + 0x68]` ; `+0x10` places, `+0x910` places réservées,
+  `+0x268..+0x270` joueurs, `+0x4a0..+0x4a8` autre liste (joueur +0x1399), `+0x920` table n° → joueur.
+- Création : `0x14334beb0(gestionnaire, 0, 0xff, n° ou -1, 0)` (alloue + `0x143347fe0`), puis `0x143349ce0(gestionnaire,
+  joueur, nom)`. Pour une connexion réseau : `0x1433cf3a0` (ServerConnection : +0x2ba0 joueurs, +0x446c raison de refus),
+  qui envoie ensuite ServerPlayerCreatedForConnection et ServerPlayerCreate (catégorie 0xf3c93dd3, type 0x3051e83c).
+- Un spawner de personnages (`0x143387960`) sait créer un joueur pour son personnage selon le mode lu dans ses données
+  (`0x143386a40`, propriété 0x84b9de3f : 0 aucun, 2/3 pas de joueur, 1 et 300 = bot : AISpawnBotMessage ensuite).
+  Il fait : personnage case 0x2d0 (`0x143377c00` : personnage +0x250 = joueur, +0x409 = joueur +0x1398) puis
+  `0x14334a4e0(joueur, personnage)`, puis `0x143382600` (gardes : peut être pris pour cible).
+- Essai 2 (overlay, Test solo) : même suite pour le personnage du fantôme.
 
 ## Missions, points de passage, réapparition
 

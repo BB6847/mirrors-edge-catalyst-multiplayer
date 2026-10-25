@@ -1,59 +1,89 @@
 // =====================================================================================
-//  MEC Coop - les gardes voient les autres joueurs (ESSAI, seulement en « Test solo » pour l'instant)
+//  MEC Coop - les gardes voient les autres joueurs (ESSAI 2, seulement en « Test solo »)
 //
-//  Ce que le jeu fait : à chaque apparition de Faith il envoie AIPlayerEnableAsTargetMessage (catégorie « AI »
-//  0x0059722d, type 0x63c0f317, vtable 0x141b5d758, 64 octets ; constructeur 0x144674e80) au serveur :
-//    +0x30 = le spawner du personnage (PamServerCharacterSpawnEntity), +0x38 = 1 (peut être pris pour cible).
-//  Les IA ajoutent alors ce personnage à leurs cibles. Essai : le même message, pour le spawner des fantômes
-//  (les autres joueurs), construit et envoyé comme menu.cpp le fait pour ses messages.
+//  Les gardes ne ciblent que les personnages qui ont un JOUEUR (ServerPlayer, personnage +0x250) :
+//  AIPlayerEnableAsTargetMessage (+0x30 joueur, +0x38 oui) est envoyé par 0x143382600 pour ces personnages.
+//  Les fantômes n'en ont pas. Le moteur sait en créer (comme pour un « bot », 0x143387960) :
+//    0x14334beb0(gestionnaire des joueurs = [contexte serveur +0x68], 0, 0xff, -1, 0) -> nouveau ServerPlayer
+//      (refus si plus de place : gestionnaire +0x10 = places, +0x910 = places réservées, +0x268.. = joueurs)
+//    0x143349ce0(gestionnaire, joueur, nom)                 -> enregistré, nommé
+//    personnage case 0x2d0 (0x143377c00)(personnage, joueur) -> personnage +0x250 = joueur
+//    0x14334a4e0(joueur, personnage)                         -> le joueur contrôle ce personnage
+//  puis le message, envoyé en direct comme le jeu (0x142a39770, message sur la pile, 0x144674e80 / 0x142d4e9a0).
 // =====================================================================================
 #include "game.h"
 
 namespace game {
 namespace aitarget {
 
-static const uintptr_t Fn_MsgAlloc = 0x142a770c0, Arena_Messages = 0x142361940, Fn_MsgBaseCtor = 0x142a37120;
-static const uintptr_t Fn_QueueMessage = 0x142a3ad30, kServerGameContext = 0x14253d670;
-static const uintptr_t Vtbl_EnableAsTargetMsg = 0x141b5d758;
-static const uint32_t kCatAI = 0x0059722d, kTypeEnableAsTarget = 0x63c0f317;
+static const uintptr_t kServerGameContext = 0x14253d670;
+static const uintptr_t Fn_CreatePlayer = 0x14334beb0, Fn_RegisterPlayer = 0x143349ce0, Fn_PlayerSetCharacter = 0x14334a4e0;
+static const uintptr_t Fn_SendNow = 0x142a39770, Fn_EnableTargetCtor = 0x144674e80, Fn_MsgDtor = 0x142d4e9a0;
+static const size_t Slot_SetPlayer = 0x2d0;
 
 static void* g_doneFor = NULL;
-static DWORD g_since = 0;
+static DWORD g_seenAt = 0;
+static uintptr_t g_player = 0;
 
-static bool post(void* spawner, bool enable) {
+static void enableAsTarget(uintptr_t player, bool on) {
     uintptr_t ctx = readOr<uintptr_t>(rva(kServerGameContext));
-    if (!ctx || !spawner) return false;
-    void* m = ((void* (*)(uint64_t, uintptr_t))rva(Fn_MsgAlloc))(0x40, rva(Arena_Messages));
-    if (!m) return false;
-    memset(m, 0, 0x40);
-    ((void (*)(void*, uint32_t, uint32_t, uint32_t))rva(Fn_MsgBaseCtor))(m, kCatAI, kTypeEnableAsTarget, 0xff);
-    *(uintptr_t*)m = rva(Vtbl_EnableAsTargetMsg);
-    *(void**)((uint8_t*)m + 0x30) = spawner;
-    *((uint8_t*)m + 0x38) = enable ? 1 : 0;
-    ((void (*)(uintptr_t, void*, float))rva(Fn_QueueMessage))(ctx + 0x10, m, 0.f);
-    return true;
+    if (!ctx || !player) return;
+    alignas(16) uint8_t msg[0x60];
+    memset(msg, 0, sizeof(msg));
+    ((void (*)(void*))rva(Fn_EnableTargetCtor))(msg);
+    *(uintptr_t*)(msg + 0x30) = player;
+    msg[0x38] = on ? 1 : 0;
+    ((void (*)(uintptr_t, void*))rva(Fn_SendNow))(ctx + 0x10, msg);
+    ((void (*)(void*))rva(Fn_MsgDtor))(msg);
+}
+
+static void attach(void* ch) {
+    uintptr_t ctx = readOr<uintptr_t>(rva(kServerGameContext));
+    uintptr_t mgr = ctx ? readOr<uintptr_t>(ctx + 0x68) : 0;
+    if (!mgr) { logf("gardes : ESSAI, pas de gestionnaire des joueurs"); return; }
+    int places = readOr<int>(mgr + 0x10);
+    uint32_t reserved = readOr<uint32_t>(mgr + 0x910);
+    uintptr_t h0 = readOr<uintptr_t>(mgr + 0x268), h1 = readOr<uintptr_t>(mgr + 0x270);
+    logf("gardes : ESSAI, joueurs : %d places, %u réservées, %d joueurs", places, reserved, (int)((h1 - h0) / 8));
+    if (readOr<uintptr_t>((uintptr_t)ch + Character_Player)) { logf("gardes : le fantôme a déjà un joueur"); return; }
+    typedef uintptr_t (*CreateFn)(uintptr_t, uint8_t, int, uint32_t, uint8_t);
+    uintptr_t player = ((CreateFn)rva(Fn_CreatePlayer))(mgr, 0, 0xff, 0xffffffffu, 0);
+    if (!player) {
+        // plus de place (solo : sans doute 1) : une place de plus, en mémoire seulement
+        poke<int>(mgr + 0x10, places + 1);
+        player = ((CreateFn)rva(Fn_CreatePlayer))(mgr, 0, 0xff, 0xffffffffu, 0);
+        logf("gardes : 1re création refusée (plus de place), avec une place de plus : %s", player ? "OK" : "refusée encore");
+        if (!player) return;
+    }
+    logf("gardes : joueur créé %llx", (unsigned long long)player);
+    static const char name[] = "Ami";
+    ((void (*)(uintptr_t, uintptr_t, const char*))rva(Fn_RegisterPlayer))(mgr, player, name);
+    logf("gardes : joueur enregistré");
+    typedef void (*SetPlayerFn)(void*, uintptr_t);
+    SetPlayerFn sp = (SetPlayerFn)gameVirtual(ch, Slot_SetPlayer);
+    if (!sp) { logf("gardes : personnage sans case 0x2d0"); return; }
+    sp(ch, player);
+    logf("gardes : personnage relié au joueur");
+    ((void (*)(uintptr_t, void*))rva(Fn_PlayerSetCharacter))(player, ch);
+    logf("gardes : le joueur contrôle le personnage");
+    enableAsTarget(player, true);
+    g_player = player;
+    logf("gardes : ESSAI, le fantôme est signalé comme cible aux gardes");
 }
 
 // thread serveur, à chaque tour ; role : 3 = test solo (seul cas essayé pour l'instant)
 void tick(int role) {
-    // DÉSACTIVÉ (25/10) : le jeu met dans ce message l'objet JOUEUR du personnage (personnage +0x250, envoyé
-    // par 0x143382600 pour chaque personnage qui en a un, en direct par 0x142a39770), pas son spawner ; les
-    // fantômes n'ont pas de joueur. Envoyer un spawner à la place risquait un plantage. Voir docs/recherche.md.
-    (void)role;
-    return;
     if (role != 3) return;
-    void* sp = level::ghostSpawner();
-    if (!sp || !level::spawnerAlive(sp) || sp == g_doneFor) return;
-    // un peu après l'apparition du fantôme (son personnage doit exister)
-    if (!g_since) { g_since = GetTickCount(); return; }
-    if (GetTickCount() - g_since < 3000) return;
-    g_since = 0;
-    g_doneFor = sp;
-    bool ok = post(sp, true);
-    logf("gardes : ESSAI, les autres joueurs signalés comme cibles (spawner %p) : %s", sp, ok ? "envoyé" : "échec");
+    void* ch = ghosts::firstServerCharacter();
+    if (!ch || ch == g_doneFor) return;
+    if (!g_seenAt) { g_seenAt = GetTickCount(); return; }
+    if (GetTickCount() - g_seenAt < 4000) return;     // le personnage du fantôme doit être bien en place
+    g_seenAt = 0;
+    g_doneFor = ch;
+    attach(ch);
 }
 
-void levelChanged() { g_doneFor = NULL; g_since = 0; }
+void levelChanged() { g_doneFor = NULL; g_seenAt = 0; g_player = 0; }
 
 }  // namespace aitarget
 }  // namespace game
