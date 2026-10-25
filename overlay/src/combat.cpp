@@ -98,6 +98,23 @@ static void* hookHuman(void* comp, void* out, void* info) {
                         : ghosts::isGhostCharacter((void*)owner) ? "FANTÔME (l'autre joueur)" : "autre humain";
         logf("combat : coup reçu par %s : santé %.1f -> %.1f (dégâts %.1f, type %d)", who, before, after, dmg,
              info ? readOr<int>((uintptr_t)info + 0xc0, -1) : -1);
+        // d'où vient le coup : adresses du jeu sur la pile (le 1er = l'appelant direct)
+        if (g_humanSeen <= 6) {
+            uintptr_t gb = moduleBase(), ge = gb + 0x7300000, b0 = gb - 0x140000000ull;
+            char line[400];
+            int len = _snprintf(line, sizeof(line), "%llx", (unsigned long long)((uintptr_t)__builtin_return_address(0) - b0));
+            uintptr_t* sp = (uintptr_t*)__builtin_frame_address(0);
+            int shown = 0;
+            for (int i = 0; i < 160 && shown < 14 && len < (int)sizeof(line) - 20; i++) {
+                uintptr_t v = 0;
+                if (!read((uintptr_t)(sp + i), v) || v < gb + 0x1000 || v >= ge) continue;
+                MEMORY_BASIC_INFORMATION mbi;
+                if (!VirtualQuery((void*)v, &mbi, sizeof(mbi)) || !(mbi.Protect & (PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE))) continue;
+                len += _snprintf(line + len, sizeof(line) - len, " %llx", (unsigned long long)(v - b0));
+                shown++;
+            }
+            logf("combat :   pile du coup : %s", line);
+        }
     }
     SetLastError(err);
     return r;

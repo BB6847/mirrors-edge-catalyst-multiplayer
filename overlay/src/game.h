@@ -150,6 +150,7 @@ inline bool isKindOfRuntime(void* obj, uintptr_t classInfo) {
     return (uint32_t)(id - range[0]) <= (uint32_t)(range[1] - range[0]);
 }
 inline bool isKindOf(void* obj, uintptr_t tiVa) { return isKindOfRuntime(obj, rva(tiVa)); }
+uintptr_t findTypeByName(const char* name);   // type du moteur par son nom (adresse réelle), 0 si inconnu
 inline void* getComponent(void* character, uintptr_t tiVa) {
     typedef void* (*Fn)(void*, const void*);
     Fn fn = (Fn)gameVirtual(character, Vtbl_GetComponent);

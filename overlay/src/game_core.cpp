@@ -1298,6 +1298,8 @@ static uintptr_t findType(const char* want) {
     return 0;
 }
 
+uintptr_t findTypeByName(const char* name) { return findType(name); }
+
 static DWORD WINAPI MonitorThread(LPVOID) {
     logf("MEC Coop : module personnages 3D chargé");
     // version du jeu : quelques types doivent être exactement où on les attend

@@ -62,7 +62,31 @@ static void dumpListeners(uint32_t category, const char* what) {
     }
 }
 
+// diagnostic : quels composants (santé, physique...) ont l'écho et Faith ? (les coups des gardes ne comptent pas
+// sur l'écho : sans composant de santé, rien ne les reçoit)
+static void compareComponents(void* ghost) {
+    static const char* names[] = {"PamServerHumanHealthComponent", "PamServerHealthComponent", "ServerHealthComponent",
+                                  "PamServerAIHealthComponent", "ServerCharacterPhysicsComponent",
+                                  "PamServerCharacterPhysicsComponent", "PamServerHitReactionComponent",
+                                  "PamServerMeleeTargetComponent", "PamServerCombatComponent", "ServerBoneCollisionComponent",
+                                  "PamServerSoldierBodyComponent", "PamServerDamageComponent"};
+    void* me = level::playerCharacter();
+    typedef void* (*Fn)(void*, const void*);
+    uintptr_t b = moduleBase() - 0x140000000ull;
+    for (const char* n : names) {
+        uintptr_t ti = findTypeByName(n);
+        if (!ti) { logf("composants : %s inconnu", n); continue; }
+        Fn fg = (Fn)gameVirtual(ghost, Vtbl_GetComponent), fm = me ? (Fn)gameVirtual(me, Vtbl_GetComponent) : NULL;
+        void* cg = fg ? fg(ghost, (const void*)ti) : NULL;
+        void* cm = fm ? fm(me, (const void*)ti) : NULL;
+        logf("composants : %s : écho %p (vt %llx), Faith %p (vt %llx)", n, cg,
+             (unsigned long long)(cg ? readOr<uintptr_t>((uintptr_t)cg) - b : 0), cm,
+             (unsigned long long)(cm ? readOr<uintptr_t>((uintptr_t)cm) - b : 0));
+    }
+}
+
 static void attach(void* ch) {
+    compareComponents(ch);
     uintptr_t ctx = readOr<uintptr_t>(rva(kServerGameContext));
     uintptr_t mgr = ctx ? readOr<uintptr_t>(ctx + 0x68) : 0;
     if (!mgr) { logf("gardes : ESSAI, pas de gestionnaire des joueurs"); return; }
