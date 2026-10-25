@@ -40,8 +40,15 @@ void publishOwnProfile() {
     last = GetTickCount();
     OnlineId own;
     memset(&own, 0, sizeof(own));
-    if (ownOnlineId(own)) setOwnProfile(own.id, own.name);
+    bool ok = ownOnlineId(own);
+    if (ok) setOwnProfile(own.id, own.name);
     else setOwnProfile(0, "");
+    static int lastState = -1;
+    if ((int)ok != lastState) {
+        lastState = ok;
+        if (ok) logf("carte : mon profil EA : %s", own.name);
+        else logf("carte : pas de profil EA trouvé (jeu hors ligne ?) : pas de marqueurs");
+    }
 }
 
 static bool placed(uintptr_t mgr, uint64_t id) {
@@ -82,6 +89,14 @@ static void updateManager(uintptr_t mgr, bool on) {
             if (profileOf(all[i].id, w.oid.id, w.oid.name)) nw++;
         }
     }
+    static int lastNw = -1;
+    static size_t lastCount = (size_t)-1;
+    if (nw != lastNw || count != lastCount) {
+        lastNw = nw;
+        lastCount = count;
+        logf("carte : %d joueur(s) à montrer, %u emplacement(s) d'amis dans ce gestionnaire (montrer : %s)", nw,
+             (unsigned)count, on ? "oui" : "non");
+    }
     for (size_t i = 0; i < count; i++) {          // ceux qui sont partis : emplacement rendu au jeu
         uint64_t id = 0;
         memcpy(&id, slots + i * Slot_Size + Slot_OnlineId, 8);
@@ -104,7 +119,11 @@ static void updateManager(uintptr_t mgr, bool on) {
         if (!slot || !placed(mgr, want[k].oid.id)) {
             typedef void* (*AssignFn)(void*, const OnlineId*, const float*, int);
             slot = (uintptr_t)((AssignFn)rva(Fn_AssignSlot))((void*)mgr, &want[k].oid, pos, kPriority);
-            if (!slot) continue;
+            if (!slot) {
+                static DWORD lastNo = 0;
+                if (GetTickCount() - lastNo > 10000) { lastNo = GetTickCount(); logf("carte : le jeu refuse un emplacement pour %s", want[k].oid.name); }
+                continue;
+            }
             if (g_nplaced < 32) g_placed[g_nplaced++] = {mgr, want[k].oid.id};
             logf("carte : %s est sur la carte", want[k].oid.name);
         }
@@ -116,6 +135,8 @@ static void updateManager(uintptr_t mgr, bool on) {
 static void poolUpdate(void* pool, void* info) {
     DWORD err = GetLastError();
     publishOwnProfile();
+    static bool first = true;
+    if (first) { first = false; logf("carte : le jeu met à jour ses marqueurs d'amis"); }
     uintptr_t pl = (uintptr_t)pool, range[2] = {0, 0};
     if (pl && read(pl + Pool_Entries, range, sizeof(range)) && range[1] > range[0] && (range[1] - range[0]) / Pool_EntrySize <= 16) {
         size_t n = (range[1] - range[0]) / Pool_EntrySize;
