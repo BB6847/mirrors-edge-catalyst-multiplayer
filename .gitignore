@@ -14,3 +14,4 @@ sauvegardes/
 archive_*/
 log_*.txt
 *.log
+gridnode/

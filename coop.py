@@ -1527,6 +1527,15 @@ def imgui_color(hex_color):
     return 0xFF000000 | (b << 16) | (g << 8) | r
 
 
+def gridnode_dll():
+    """GridNode (outil de test du dev de MECMP, pas fourni avec le mod) : ta copie, si elle est sur ton PC."""
+    for d in (os.path.join(os.path.expanduser("~"), "Desktop", "luat"), os.path.join(HERE, "gridnode")):
+        p = os.path.join(d, "gridnode.dll")
+        if os.path.isfile(p):
+            return p
+    return None
+
+
 def inject_dll(pid, dll_path):
     """Charge la DLL dans le jeu (méthode classique LoadLibraryW + CreateRemoteThread)."""
     import ctypes.wintypes as wt
@@ -2450,7 +2459,7 @@ TXT, DIM, FAINT = "#f2f3f5", "#8b929c", "#5a616b"
 RED, RED_HI, RED_LO = "#e3261c", "#ff3b30", "#9e1a13"
 GREEN, ORANGE, GREY = "#4cd964", "#ffb347", "#3a404b"
 FONT = "Segoe UI"
-APP_VERSION = "3.7.0"
+APP_VERSION = "3.7.1"
 
 
 def _round_rect(c, x1, y1, x2, y2, r, **kw):
@@ -2952,6 +2961,11 @@ class App:
                     size=9).pack(side="left", padx=(8, 0))
         row3 = tk.Frame(f, bg=CARD)
         row3.pack(fill="x", pady=(8, 0))
+        if gridnode_dll():                     # outil de test du dev MECMP, seulement sur le PC qui l'a (pas fourni)
+            row4 = tk.Frame(f, bg=CARD)
+            row4.pack(fill="x", pady=(8, 0))
+            RoundButton(row4, "Test : lancer GridNode", self.start_gridnode, "ghost", height=30, width=180,
+                        size=9).pack(side="left")
         RoundButton(row3, "Test solo : l'écho reste ici / me suit", self.freeze_echo, "ghost", height=30, width=260,
                     size=9).pack(side="left")
         self.label(page, "Personnages 3D et sons : méthode du mod MECMP (licence MIT).", 8, FAINT).pack(
@@ -2962,6 +2976,17 @@ class App:
         if POSE and POSE.game_state() == 2 and kind == 1:
             POSE.request_menu(kind)
             log("Rechargement de la sauvegarde demandé (bouton)" if kind else "Retour au menu principal demandé (bouton)")
+
+    def start_gridnode(self):
+        """Outil de test : injecte GridNode (ta copie à toi, sur ton Bureau) dans le jeu, à côté de l'overlay."""
+        dll = gridnode_dll()
+        mem = getattr(self.game, "mem", None)
+        if not dll or not mem or not getattr(mem, "pid", None) or not self.game_running():
+            self.notice("Lance d'abord le jeu")
+            return
+        err = inject_dll(mem.pid, dll)
+        log(f"GridNode injecté dans {mem.pid} : {err or 'OK'} ({dll})")
+        self.notice("GridNode lancé : P pour son menu, F8 pour enregistrer" if not err else f"GridNode : {err}")
 
     def freeze_echo(self):
         if isinstance(self.net, Demo):
