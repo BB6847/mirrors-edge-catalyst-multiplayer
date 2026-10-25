@@ -623,6 +623,7 @@ static void Frame(const Shared& s, float dt) {
 }
 
 static HRESULT __stdcall hkPresent(IDXGISwapChain* sc, UINT sync, UINT flags) {
+    if (flags & DXGI_PRESENT_TEST) return oPresent(sc, sync, flags);   // simple essai, rien n'est affiché
     if (game::active() && !game::hooks::clientUpdateHooked()) game::ghosts::renderFrame();
     // (Alt+R retiré : le retour au menu remettait l histoire à zéro)
     if (!g_ready) {
@@ -675,7 +676,54 @@ static HRESULT __stdcall hkResize(IDXGISwapChain* sc, UINT n, UINT w, UINT h, DX
 // ---------------------------------------------------------------- installation des crochets
 static LRESULT CALLBACK DummyProc(HWND h, UINT m, WPARAM w, LPARAM l) { return DefWindowProcA(h, m, w, l); }
 
+// GridNode (outil de test, chargé avant nous) remplace la case Present de la table de DXGI et appelle ensuite
+// g_origPresent. Poser notre crochet par-dessus (fenêtre factice + MinHook) faisait planter le jeu avec l'overlay
+// Steam (25/10, appel à 0 depuis gameoverlayrenderer64). Avec lui, on s'insère dans SA chaîne : GridNode -> nous ->
+// ce qu'il appelait. Adresses de gridnode.dll 0.1.0 (reconnu à ses octets ; autre version : pas touché).
+static const uintptr_t kGnPresentHook = 0x115b60, kGnCallOrig = 0x115be5, kGnOrigPresent = 0x4746f0, kGnOrigResize = 0x4746e8;
+static bool HookThroughGridNode() {
+    HMODULE g = GetModuleHandleA("gridnode.dll");
+    if (!g) return false;
+    uintptr_t b = (uintptr_t)g;
+    static const uint8_t sig[] = {0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x55, 0x57, 0x56, 0x53};
+    uint8_t got[sizeof(sig)], call[6];
+    if (!SafeRead(b + kGnPresentHook, got, sizeof(got)) || memcmp(got, sig, sizeof(sig)) ||
+        !SafeRead(b + kGnCallOrig, call, sizeof(call)) || call[0] != 0xff || call[1] != 0x15 ||
+        kGnCallOrig + 6 + *(int32_t*)(call + 2) != kGnOrigPresent) {
+        game::logf("affichage : GridNode présent mais version inconnue, crochet habituel");
+        return false;
+    }
+    void* volatile* op = (void* volatile*)(b + kGnOrigPresent);
+    void* volatile* orz = (void* volatile*)(b + kGnOrigResize);
+    for (int i = 0; i < 300 && (!*op || !*orz); i++) Sleep(100);   // GridNode s'installe ~1,5 s après son chargement
+    if (!*op || !*orz) { game::logf("affichage : GridNode pas encore prêt, crochet habituel"); return false; }
+    Sleep(1500);
+    for (int t = 0; t < 5; t++) {
+        void* p = *op;
+        if (p != (void*)hkPresent) {
+            oPresent = (decltype(oPresent))p;
+            InterlockedCompareExchangePointer((PVOID volatile*)op, (void*)hkPresent, p);
+        }
+        void* r = *orz;
+        if (r != (void*)hkResize) {
+            oResize = (decltype(oResize))r;
+            InterlockedCompareExchangePointer((PVOID volatile*)orz, (void*)hkResize, r);
+        }
+        Sleep(1000);
+        if (*op == (void*)hkPresent && *orz == (void*)hkResize) {
+            game::logf("affichage : branché derrière GridNode (pas de fenêtre factice)");
+            return true;
+        }
+    }
+    // on remet ce qu'on a changé avant le crochet habituel (sinon on serait deux fois dans la chaîne)
+    if (*op == (void*)hkPresent) InterlockedCompareExchangePointer((PVOID volatile*)op, (void*)oPresent, (void*)hkPresent);
+    if (*orz == (void*)hkResize) InterlockedCompareExchangePointer((PVOID volatile*)orz, (void*)oResize, (void*)hkResize);
+    game::logf("affichage : GridNode reprend sa case, crochet habituel");
+    return false;
+}
+
 static DWORD WINAPI InitThread(LPVOID) {
+    if (HookThroughGridNode()) return 0;
     WNDCLASSEXA wc = { sizeof(wc), CS_CLASSDC, DummyProc, 0, 0, GetModuleHandleA(NULL), NULL, NULL, NULL, NULL,
                        "MECCoopDummy", NULL };
     RegisterClassExA(&wc);
