@@ -1424,9 +1424,19 @@ class Demo(threading.Thread):
         self.start_pos = None
         self.running = True
         self.echo_t, self.echo_rx = None, 0
+        self.frozen = None                     # écho figé : (position, angle, os) ; None = il me suit
 
     def stop(self):
         self.running = False
+
+    def toggle_freeze(self):
+        """L'écho reste là où il est (test : à qui s'en prennent les gardes ?), ou recommence à me suivre."""
+        lp = POSE.local() if POSE else None
+        if self.frozen is None and lp:
+            self.frozen = ((lp["pos"][0] + 3.0, lp["pos"][1], lp["pos"][2]), lp["yaw"], lp["bones"])
+        else:
+            self.frozen = None
+        return self.frozen is not None
 
     def run(self):
         t0 = time.time()
@@ -1446,12 +1456,15 @@ class Demo(threading.Thread):
                     if lp["t"] != self.echo_t:
                         self.echo_t, self.echo_rx = lp["t"], self.echo_rx + 1
                     ep = (lp["pos"][0] + 3.0, lp["pos"][1], lp["pos"][2])
+                    yaw, bones = lp["yaw"], lp["bones"]
+                    if self.frozen:
+                        ep, yaw, bones = self.frozen
                     POSE.write_remotes([{"name": "Écho", "rx": self.echo_rx, "look": ECHO_LOOK, "t": lp["t"], "pos": ep,
-                                         "yaw": lp["yaw"], "bones": lp["bones"]}])
+                                         "yaw": yaw, "bones": bones}])
                     snd = POSE.audio_out()          # mes sons rejoués par l'Écho (test des sons tout seul)
                     if snd:
                         POSE.audio_in("Écho", snd)
-                    others.append({"n": "Écho", "p": [p[0] + 3.0, p[1], p[2]]})
+                    others.append({"n": "Écho", "p": list(ep)})
                 self.others = others
             time.sleep(0.033)
         if POSE:
@@ -2400,7 +2413,7 @@ TXT, DIM, FAINT = "#f2f3f5", "#8b929c", "#5a616b"
 RED, RED_HI, RED_LO = "#e3261c", "#ff3b30", "#9e1a13"
 GREEN, ORANGE, GREY = "#4cd964", "#ffb347", "#3a404b"
 FONT = "Segoe UI"
-APP_VERSION = "3.6.3"
+APP_VERSION = "3.6.4"
 
 
 def _round_rect(c, x1, y1, x2, y2, r, **kw):
@@ -2900,6 +2913,10 @@ class App:
                     size=9).pack(side="left")
         RoundButton(row2, "Faire apparaître un garde", self.spawn_enemy, "ghost", height=30, width=180,
                     size=9).pack(side="left", padx=(8, 0))
+        row3 = tk.Frame(f, bg=CARD)
+        row3.pack(fill="x", pady=(8, 0))
+        RoundButton(row3, "Test solo : l'écho reste ici / me suit", self.freeze_echo, "ghost", height=30, width=260,
+                    size=9).pack(side="left")
         self.label(page, "Personnages 3D et sons : méthode du mod MECMP (licence MIT).", 8, FAINT).pack(
             pady=(0, 6))
 
@@ -2908,6 +2925,14 @@ class App:
         if POSE and POSE.game_state() == 2 and kind == 1:
             POSE.request_menu(kind)
             log("Rechargement de la sauvegarde demandé (bouton)" if kind else "Retour au menu principal demandé (bouton)")
+
+    def freeze_echo(self):
+        if isinstance(self.net, Demo):
+            on = self.net.toggle_freeze()
+            self.notice("L'écho reste ici" if on else "L'écho te suit de nouveau")
+            log("Écho figé" if on else "Écho : me suit")
+        else:
+            self.notice("Lance d'abord Test solo")
 
     def spawn_enemy(self):
         """Test des combats : un garde apparaît devant moi (overlay : spawner d'ennemis du niveau)."""
