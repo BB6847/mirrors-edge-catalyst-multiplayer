@@ -17,6 +17,7 @@ namespace ghosts {
 
 static const uint32_t kFreshMs = 1500;
 static const uint32_t kHideAfterMs = 3000;
+static const DWORD kDespawnMs = 60000;   // un fantôme sans joueur depuis 60 s est retiré (MECMP)
 static const DWORD kSpawnGapMs = 2000, kMinSpawnGapMs = 200, kClaimWindowMs = 1500;
 static const uint64_t kSettleTicks = 90, kPlayerSettleTicks = 45;
 static const size_t kMaxGhosts = 15;
@@ -39,6 +40,7 @@ struct Ghost {
     DWORD parkUntil;
     int lookApplied, lookWanted;   // apparence posée / demandée (1 Faith, 2 fantôme ; 0 = aucune)
     DWORD lookTriedAt;
+    DWORD freeSince;      // caché sans joueur depuis (0 = utilisé) : retiré après kDespawnMs
 };
 
 static Lock g_m;
@@ -118,6 +120,7 @@ static uintptr_t blueprintCharacterData(uintptr_t bp) {
 static void startHiding(Ghost& g) {
     if (g.clientChar) setClientVisible(g.clientChar, false);
     g.hidden = true;
+    if (!g.freeSince) g.freeSince = GetTickCount() | 1;
     g.parkUntil = GetTickCount() + kParkMs;
     g.posing = false;
     g.posingSince = 0;
@@ -185,6 +188,16 @@ static void drive(Ghost& g, const PlayerState& input) {
         float* t = pose + traj * 8;
         if (st.boneCount != N) { t[4] = 0.f; t[5] = sinf(st.yaw * 0.5f); t[6] = 0.f; t[7] = cosf(st.yaw * 0.5f); }
         placeAnchor(pose, traj, st.pos);
+    }
+    // après la carte (et peut-être d'autres écrans), le client ne prend plus la pose (son contrôle CRP_CountOk
+    // retombe à 0) alors qu'on ne la réplique plus : le fantôme se figeait. On la réplique de nouveau (MECMP).
+    if (g.posing && g.clientComp && GetTickCount() - g.posingSince > kReplicateMs) {
+        ClientCompView v;
+        if (readClientComp(g.clientComp, g.clientChar, v) && !v.at<uint8_t>(CRP_CountOk)) {
+            g.posingSince = GetTickCount();
+            static DWORD lastNote = 0;
+            if (GetTickCount() - lastNote > 10000) { lastNote = GetTickCount(); logf("fantôme : %s ne prenait plus la pose (carte ?), relancé", g.name); }
+        }
     }
     bool clientDriven = g.posing && g.clientComp && GetTickCount() - g.posingSince > kReplicateMs;
     if (!clientDriven) setNetDirty(c + SRP_NetState, 2 | 4);
@@ -375,7 +388,79 @@ void onClientCharacter(void* ent) {
 void setCharacterDataType(uintptr_t ti) { g_tiCharData = ti; }
 void setEnabled(bool on) { g_enabled = on; }
 
+// ---- d'après MECMP 0.9.0-beta.3 (MIT) : l'écho de la carte et l'écran « Ton écho » prennent le DERNIER personnage
+// client du spawner client ; nos fantômes y étaient ajoutés après celui du jeu, et la carte prenait un fantôme
+// (il se figeait, l'écran le montrait). On remet ceux du jeu en dernier (thread client, au plus toutes les 0,25 s).
+static void* g_clientSpawners[256];
+static size_t g_nClientSpawners = 0;
+void onClientSpawner(void* e) {
+    Guard lk(g_m);
+    for (size_t i = 0; i < g_nClientSpawners; i++) if (g_clientSpawners[i] == e) return;
+    if (g_nClientSpawners >= 256) { memmove(g_clientSpawners, g_clientSpawners + 1, 255 * sizeof(void*)); g_nClientSpawners = 255; }
+    g_clientSpawners[g_nClientSpawners++] = e;
+}
+static void keepGameClientCharactersLast() {
+    static DWORD lastAt = 0;
+    DWORD now = GetTickCount();
+    if (now - lastAt < 250) return;
+    lastAt = now;
+    uintptr_t mine[kMaxGhosts];
+    size_t nm = 0;
+    void* sps[256];
+    size_t ns;
+    {
+        Guard lk(g_m);
+        for (size_t i = 0; i < g_count; i++) if (g_ghosts[i].clientChar) mine[nm++] = (uintptr_t)g_ghosts[i].clientChar;
+        ns = g_nClientSpawners;
+        memcpy(sps, g_clientSpawners, ns * sizeof(void*));
+    }
+    if (!nm) return;
+    for (size_t s = 0; s < ns; s++) {
+        uintptr_t sp = (uintptr_t)sps[s];
+        if (readOr<uintptr_t>(sp) != rva(Vtbl_ClientCharacterSpawnEntity)) continue;
+        uintptr_t list[2] = {0, 0};
+        if (!read(sp + ClientSpawner_Spawned, list, sizeof(list)) || list[1] <= list[0] || (list[1] - list[0]) % 8 ||
+            (list[1] - list[0]) / 8 > 64)
+            continue;
+        size_t n = (list[1] - list[0]) / 8;
+        uintptr_t items[64], order[64];
+        if (!read(list[0], items, n * 8)) continue;
+        size_t no = 0, nt = 0;
+        uintptr_t theirs[64];
+        bool lastIsOurs = false;
+        for (size_t i = 0; i < n; i++) {
+            bool ours = false;
+            for (size_t k = 0; k < nm; k++) ours = ours || items[i] == mine[k];
+            if (ours) order[no++] = items[i]; else theirs[nt++] = items[i];
+            if (i == n - 1) lastIsOurs = ours;
+        }
+        if (!no || !nt || !lastIsOurs) continue;
+        memcpy(order + no, theirs, nt * 8);
+        poke(list[0], order, n * 8);
+        poke<uintptr_t>(sp + ClientSpawner_LastBus, readOr<uintptr_t>(order[n - 1] + Character_Bus));
+        logf("fantôme : liste du spawner client %p remise en ordre (le personnage du jeu est de nouveau le dernier)", (void*)sp);
+    }
+}
+
+// retirer un fantôme comme le jeu retire un fantôme de replay : unspawn du spawner (libère aussi son joueur)
+static bool spawnerHolds(void* spawner, void* ch) {
+    uintptr_t list[2] = {0, 0};
+    if (!spawner || !read((uintptr_t)spawner + Spawner_Spawned, list, sizeof(list)) || list[1] < list[0] ||
+        (list[1] - list[0]) / 8 > 64)
+        return false;
+    for (uintptr_t it = list[0]; it < list[1]; it += 8) if (readOr<uintptr_t>(it) == (uintptr_t)ch) return true;
+    return false;
+}
+static bool despawnGhost(void* spawner, void* ch) {
+    if (!level::spawnerAlive(spawner) || !spawnerHolds(spawner, ch)) return false;
+    uintptr_t vt = readOr<uintptr_t>((uintptr_t)spawner);
+    if (!vt || readOr<uintptr_t>(vt + Vtbl_SpawnerUnspawn) != rva(Fn_SpawnerUnspawn)) return false;
+    ((void (*)(void*, void*, bool, void*))rva(Fn_SpawnerUnspawn))(spawner, ch, true, NULL);
+    return !spawnerHolds(spawner, ch);
+}
+
 void beforeClientReplayUpdate() {
+    keepGameClientCharactersLast();
     InterlockedIncrement(&g_updaterCalls);
     renderFrame();
 }
@@ -438,6 +523,7 @@ static bool reuseFreeGhost(const remote::Info& p, const remote::Info* present, s
     pick->posingSince = 0;
     pick->visibleCalls = 0;
     pick->hidden = true;
+    pick->freeSince = 0;
     pick->clientCharAt = GetTickCount();
     pick->lookApplied = pick->lookWanted = 0;
     pick->lookTriedAt = 0;
@@ -457,6 +543,28 @@ void tick(uint64_t ticksInLevel) {
             if (!g_ghosts[i].character || level::characterExists(g_ghosts[i].character, own)) { ++i; continue; }
             logLostGhost(g_ghosts[i], own);
             g_ghosts[i] = g_ghosts[--g_count];
+        }
+    }
+    {   // fantômes sans joueur depuis kDespawnMs : retirés par leur spawner, comme le jeu (MECMP 0.9.0-beta.3)
+        void* sp = NULL;
+        void* ch = NULL;
+        {
+            Guard lk(g_m);
+            for (size_t i = 0; i < g_count && !ch; i++) {
+                const Ghost& g = g_ghosts[i];
+                if (g.character && g.hidden && g.freeSince && !isPresent(players, np, g.peer) &&
+                    GetTickCount() - g.freeSince > kDespawnMs) { sp = g.spawner; ch = g.character; }
+            }
+        }
+        if (ch) {
+            bool ok = despawnGhost(sp, ch);
+            Guard lk(g_m);
+            for (size_t i = 0; i < g_count; i++)
+                if (g_ghosts[i].character == ch) {
+                    if (ok) { logf("fantôme : celui de %s retiré (personne depuis %u s)", g_ghosts[i].name, kDespawnMs / 1000); g_ghosts[i] = g_ghosts[--g_count]; }
+                    else g_ghosts[i].freeSince = 0;      // le spawner ne le tient plus : gardé caché comme avant
+                    break;
+                }
         }
     }
     // le jeu supprime un fantôme créé juste après l'apparition de mon personnage : on attend un peu
@@ -536,6 +644,7 @@ void tick(uint64_t ticksInLevel) {
                 setClientVisible(g.clientChar, true);
                 ++g.visibleCalls;
                 g.hidden = false;
+                g.freeSince = 0;
                 visibilityChanged = true;
             }
         }
@@ -579,7 +688,10 @@ void tick(uint64_t ticksInLevel) {
                 live->ghostShader = g.ghostShader;
             }
             memcpy(live->lastPos, g.lastPos, sizeof(live->lastPos));
-            if (visibilityChanged) { live->hidden = g.hidden; live->visibleCalls = g.visibleCalls; live->parkUntil = g.parkUntil; }
+            if (visibilityChanged) {
+                live->hidden = g.hidden; live->visibleCalls = g.visibleCalls; live->parkUntil = g.parkUntil;
+                live->freeSince = g.freeSince;
+            }
             else if (have) live->parkUntil = 0;
         }
     }
@@ -588,6 +700,7 @@ void tick(uint64_t ticksInLevel) {
 void levelChanged() {
     Guard lk(g_m);
     g_count = 0;
+    g_nClientSpawners = 0;
     g_pendingAt = 0;
     g_lastSpawnAt = 0;
     g_lastSpawnFailed = false;

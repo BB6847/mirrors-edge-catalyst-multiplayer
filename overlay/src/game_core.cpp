@@ -454,14 +454,21 @@ bool referenceSetup(BoneSetup& out) {
 // =====================================================================================
 namespace hooks {
 typedef void* (*FactoryFn)(void* creator, void* ci, void* a3, void* a4);
-enum { kSpawner, kPamSpawner, kClientReplay, kClientCharacter, kCount };
+enum { kSpawner, kPamSpawner, kClientReplay, kClientCharacter, kClientSpawner, kCount };
 static FactoryFn g_orig[kCount];
 static const char* const kNames[kCount] = {"ServerCharacterSpawnEntity", "PamServerCharacterSpawnEntity",
-                                           "PamClientReplayPlayerComponent", "PamClientCharacterEntity"};
+                                           "PamClientReplayPlayerComponent", "PamClientCharacterEntity",
+                                           "ClientCharacterSpawnEntity"};
 
 static void* spawnerFactory(void* c, void* ci, void* a3, void* a4) {
     void* e = g_orig[kSpawner](c, ci, a3, a4);
     level::onSpawnerCreated(ci, e);
+    return e;
+}
+// spawners client : leur liste décide quel personnage client prend l'écho de la carte (ghosts, d'après MECMP)
+static void* clientSpawnerFactory(void* c, void* ci, void* a3, void* a4) {
+    void* e = g_orig[kClientSpawner](c, ci, a3, a4);
+    if (e) ghosts::onClientSpawner(e);
     return e;
 }
 static void* pamSpawnerFactory(void* c, void* ci, void* a3, void* a4) {
@@ -549,6 +556,7 @@ bool install(TickFn onTick, bool* ghostClients) {
     installFactory(kPamSpawner, Slot_PamServerCharacterSpawnFactory, Fn_PamServerCharacterSpawnFactory, &pamSpawnerFactory);
     bool replay = installFactory(kClientReplay, Slot_ClientReplayPlayerFactory, Fn_ClientReplayPlayerFactory, &clientReplayFactory);
     bool chars = installFactory(kClientCharacter, Slot_ClientCharacterFactory, Fn_ClientCharacterFactory, &clientCharacterFactory);
+    installFactory(kClientSpawner, Slot_ClientCharacterSpawnFactory, Fn_ClientCharacterSpawnFactory, &clientSpawnerFactory);
     if (!patchPointer(slot, (uintptr_t)&postUpdate, NULL)) {
         for (int i = g_undoN; i-- > 0;) patchPointer(g_undo[i].slot, g_undo[i].original, NULL);
         logf("crochet tick : échec, tout est remis en place");
@@ -557,6 +565,7 @@ bool install(TickFn onTick, bool* ghostClients) {
     hookUpdaters();
     audio::install();
     combat::install();
+    playersmap::install();
     *ghostClients = replay && chars;
     logf("crochets : installés%s", *ghostClients ? "" : " (sans les clients de fantômes : pas de personnages 3D)");
     return true;
@@ -724,11 +733,16 @@ struct PoseShm {
     interact::Event iaOut[32];
     uint32_t iaInHead;     // coop
     interact::Event iaIn[32];
+    // profils EA pour les marqueurs des joueurs sur la carte (v14, d'après MECMP)
+    uint64_t myOnlineId;   // overlay : mon profil (0 = hors ligne)
+    char myOnlineName[32];
+    struct { uint32_t peer; uint32_t pad; uint64_t id; char name[32]; } profiles[8];   // coop : ceux des autres
+    uint32_t mapPlayers;   // coop : 1 = montrer les autres sur la carte
 };
 #pragma pack(pop)
 static_assert(sizeof(ShmLocal) == 1056, "ShmLocal");
 static_assert(sizeof(ShmRemote) == 1092, "ShmRemote");
-static_assert(sizeof(PoseShm) == 47424, "PoseShm (coop.py : POSE_SIZE)");
+static_assert(sizeof(PoseShm) == 47852, "PoseShm (coop.py : POSE_SIZE)");
 
 static PoseShm* g_shm = NULL;
 static PoseShm* shm() {
@@ -736,7 +750,7 @@ static PoseShm* shm() {
     if (g_shm) return g_shm;
     if (GetTickCount() - lastTry < 1000) return NULL;
     lastTry = GetTickCount();
-    HANDLE h = OpenFileMappingA(FILE_MAP_ALL_ACCESS, FALSE, "Local\\MECCoopPose_v13");
+    HANDLE h = OpenFileMappingA(FILE_MAP_ALL_ACCESS, FALSE, "Local\\MECCoopPose_v14");
     if (!h) return NULL;
     PoseShm* p = (PoseShm*)MapViewOfFile(h, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(PoseShm));
     if (!p) { CloseHandle(h); return NULL; }
@@ -1070,6 +1084,37 @@ int take(Event* out, int cap) {
     return n;
 }
 }  // namespace interact
+
+namespace playersmap {
+void setOwnProfile(uint64_t id, const char* name) {
+    PoseShm* s = shm();
+    if (!s || s->magic != 0x5043454D) return;
+    lstrcpynA(s->myOnlineName, name ? name : "", sizeof(s->myOnlineName));
+    MemoryBarrier();
+    s->myOnlineId = id;
+}
+bool profileOf(uint32_t peer, uint64_t& id, char name[32]) {
+    PoseShm* s = shm();
+    if (!s || s->magic != 0x5043454D) return false;
+    if (s->role == 3) {                    // test solo : l'écho sous mon propre profil
+        id = s->myOnlineId;
+        lstrcpynA(name, s->myOnlineName, 32);
+        return id && name[0];
+    }
+    for (int i = 0; i < 8; i++)
+        if (s->profiles[i].peer == peer && s->profiles[i].id) {
+            id = s->profiles[i].id;
+            memcpy(name, s->profiles[i].name, 32);
+            name[31] = 0;
+            return name[0] != 0;
+        }
+    return false;
+}
+bool enabled() {
+    PoseShm* s = shm();
+    return s && s->magic == 0x5043454D && s->role != 0 && s->mapPlayers != 0;
+}
+}  // namespace playersmap
 
 namespace progression {
 void publish(const Flag& f) {

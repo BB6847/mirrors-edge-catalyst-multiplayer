@@ -22,6 +22,11 @@ static const uintptr_t Fn_RegisterListener = 0x142a3ad40;
 static const uint32_t kCatTelemetry = 0x258e0996;          // "PamTelemetry" (hash djb2-xor)
 static const uint32_t kCatProgression = 0xae19b9ac;        // "PamProgression"
 static const uint32_t kMissionStarted = 0xf30a1bd0, kMissionEnded = 0x8bfba07f;
+// courses (contre-la-montre des joueurs, défis nommés) : catégorie PamSocialPlay (d'après MECMP 0.9.0-beta.3, MIT,
+// src/game/runs.cpp). Comptées comme une mission : pas de téléportation, de rechargement ni de retour pendant ce temps.
+static const uint32_t kCatSocialPlay = 0x54776fc6;
+static const uint32_t kRunStarted = 0xc164590c, kRunFinished = 0xd71d027f, kRunCancelled = 0x9a9a27c6,
+                      kTrialStart = 0x1cca484e, kTrialRestart = 0x72f865f9, kTrialFinished = 0x9b35497c;
 
 struct Name { uint32_t type; const char* name; };
 static const Name kNames[] = {
@@ -58,7 +63,7 @@ static bool registerOn(uintptr_t contextGlobal, Listener& l, volatile uintptr_t&
     if (done == manager) return true;
     typedef char (*RegisterFn)(uintptr_t manager, uint32_t category, Listener* listener, uint32_t filter);
     RegisterFn reg = (RegisterFn)rva(Fn_RegisterListener);
-    if (&l == &g_client) reg(manager, kCatTelemetry, &l, 0xff);
+    if (&l == &g_client) { reg(manager, kCatTelemetry, &l, 0xff); reg(manager, kCatSocialPlay, &l, 0xff); }
     done = manager;
     logf("mission : écoute des messages de mission (%s)", who);
     return true;
@@ -123,6 +128,25 @@ static void dump(const uint8_t* m, uint32_t cat, uint32_t type) {
 static void onMessage(Listener* self, const uint8_t* m) {
     uint32_t cat = 0, type = 0;
     if (!read((uintptr_t)m + 8, cat) || !read((uintptr_t)m + 12, type)) return;
+    if (cat == kCatSocialPlay && self == &g_client) {
+        bool start = type == kRunStarted || type == kTrialStart || type == kTrialRestart;
+        bool end = type == kRunFinished || type == kRunCancelled || type == kTrialFinished;
+        if (!start && !end) return;
+        Guard g(g_m);
+        if (start && !g_state.active) {
+            g_state.active = 1;
+            lstrcpynA(g_state.name, type == kRunStarted ? "Course" : "Contre-la-montre", sizeof(g_state.name));
+            lstrcpynA(g_state.kind, "Course", sizeof(g_state.kind));
+            g_state.havePos = 0;          // pas d'invitation à suivre : on ne rejoint pas la course d'un autre
+            g_state.seq++;
+            logf("mission : début d'une course (%s)", g_state.name);
+        } else if (end && g_state.active && strcmp(g_state.kind, "Course") == 0) {
+            g_state.active = 0;
+            g_state.seq++;
+            logf("mission : fin de la course");
+        }
+        return;
+    }
     if (cat != kCatTelemetry && cat != kCatProgression) return;
     dump(m, cat, type);
     if (self != &g_client || cat != kCatTelemetry) return;

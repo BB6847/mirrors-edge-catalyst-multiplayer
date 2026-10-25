@@ -483,7 +483,7 @@ class Game(threading.Thread):
 #  Poses du corps (personnages 3D) : échange avec l'overlay par une 2e mémoire partagée
 #  Ma pose y est écrite par l'overlay ; les poses des autres y sont écrites par coop.
 # ======================================================================================
-POSE_NAME = "Local\\MECCoopPose_v13"
+POSE_NAME = "Local\\MECCoopPose_v14"
 MAX_BONES = 32
 POSE_LOCAL = struct.Struct("<IIIffffI")          # seq, valide, heure, x, y, z, cap, nb d'os (32 o)
 POSE_REMOTE = struct.Struct("<I32sIIIffffI")     # id, nom, n° de paquet, apparence, heure, x, y, z, cap, nb d'os
@@ -528,8 +528,13 @@ IA_OUT_HEAD = PG_SNAP + 16
 IA_OUT = IA_OUT_HEAD + 4
 IA_IN_HEAD = IA_OUT + 32 * IA_EVENT.size
 IA_IN = IA_IN_HEAD + 4
-POSE_SIZE = IA_IN + 32 * IA_EVENT.size
-assert POSE_SIZE == 47424, POSE_SIZE              # = sizeof(PoseShm) de l'overlay
+PROF_OWN = IA_IN + 32 * IA_EVENT.size            # v14 : mon profil EA (overlay) : id, nom
+PROF_OWN_S = struct.Struct("<Q32s")
+PROF_REMOTE = PROF_OWN + PROF_OWN_S.size           # v14 : profils des autres (coop) : joueur, -, id, nom
+PROF_REMOTE_S = struct.Struct("<IIQ32s")
+MAP_PLAYERS = PROF_REMOTE + 8 * PROF_REMOTE_S.size  # v14 : 1 = montrer les autres sur la carte
+POSE_SIZE = MAP_PLAYERS + 4
+assert POSE_SIZE == 47852, POSE_SIZE              # = sizeof(PoseShm) de l'overlay
 TRANS_SCALE = 2.05                               # les os bougent d'au plus 2 m par rapport à leur parent
 
 
@@ -731,6 +736,23 @@ class PoseLink:
                 continue
             head = (head + 1) & 0xFFFFFFFF
         struct.pack_into("<I", self.mm, CB_IN_HEAD, head)
+
+    def my_profile(self):
+        """Mon profil EA (pour les marqueurs sur la carte des autres) : (id, nom) ou None (hors ligne)."""
+        oid, name = PROF_OWN_S.unpack_from(self.mm, PROF_OWN)
+        name = name.split(b"\0")[0].decode("utf-8", "replace")
+        return (oid, name) if oid and name else None
+
+    def set_profiles(self, profiles):
+        """Profils des autres joueurs : [(nom du joueur, id EA, nom EA)] (au plus 8)."""
+        raw = bytearray(8 * PROF_REMOTE_S.size)
+        for i, (who, oid, name) in enumerate(profiles[:8]):
+            PROF_REMOTE_S.pack_into(raw, i * PROF_REMOTE_S.size, name_id(who), 0, oid & 0xFFFFFFFFFFFFFFFF,
+                                    name.encode("utf-8")[:31])
+        self.mm[PROF_REMOTE:PROF_REMOTE + len(raw)] = bytes(raw)
+
+    def set_map_players(self, on):
+        struct.pack_into("<I", self.mm, MAP_PLAYERS, 1 if on else 0)
 
     def interact_out(self):
         """Mes signaux « touche F » (perturbateur, portes...) depuis le dernier appel : [[x, y, z, signal, n°], ...]"""
@@ -1025,6 +1047,9 @@ class Server(threading.Thread):
                         and all(isinstance(v, (int, float)) for v in ms[2:])):
                     ms = None
                 e["ms"] = [ms[0], ms[1][:63]] + ms[2:] if ms else None
+                oi = msg.get("oi")
+                if isinstance(oi, list) and len(oi) == 2 and all(isinstance(v, str) for v in oi) and oi[0].isdigit():
+                    e["oi"] = [oi[0][:20], oi[1][:31]]
             e.setdefault("l", 1)
             self.players[addr] = e
             try:
@@ -1040,6 +1065,8 @@ class Server(threading.Thread):
                         st = {"n": v["n"], "p": v.get("p")}
                         if v.get("ms"):
                             st["ms"] = v["ms"]
+                        if v.get("oi"):
+                            st["oi"] = v["oi"]
                         if a[0] == "127.0.0.1":            # le joueur qui héberge (son coop est sur cette machine)
                             st["h"] = 1
                             if v.get("tod") is not None:
@@ -1224,6 +1251,9 @@ class Client(threading.Thread):
                 mt = POSE.my_tod() if POSE else -1.0
                 if mt >= 0:
                     msg["tod"] = round(mt, 1)
+                prof = POSE.my_profile() if POSE else None
+                if prof:
+                    msg["oi"] = [str(prof[0]), prof[1][:31]]
                 mine = POSE.my_mission() if POSE else None
                 if mine and mine["pos"]:
                     msg["ms"] = [mine["seq"], mine["name"][:63]] + [round(v, 2) for v in mine["pos"]]
@@ -1348,6 +1378,13 @@ class Client(threading.Thread):
                 if isinstance(obj, list):
                     self.others = [o for o in obj if isinstance(o, dict) and o.get("n") != self.name]
                     self.last_rx = time.time()
+                    if POSE and hasattr(POSE, "set_profiles"):   # les autres sur ma carte (leur profil EA)
+                        profs = []
+                        for o in self.others:
+                            oi = o.get("oi")
+                            if isinstance(oi, list) and len(oi) == 2 and str(oi[0]).isdigit():
+                                profs.append((str(o.get("n"))[:16], int(oi[0]), str(oi[1])))
+                        POSE.set_profiles(profs)
                     if POSE:                       # l'heure de l'hôte (pour celui qui rejoint)
                         host = [o for o in self.others if o.get("h") and isinstance(o.get("tod"), (int, float))]
                         POSE.set_host_tod(self.tod.update(float(host[0]["tod"])) if host else -1.0)
@@ -1482,7 +1519,7 @@ FRAMES_OFF = SHM_HEAD.size + 8 * SHM_PLAYER.size + 96          # compteur d'imag
 SHM_CAM = struct.Struct("<Qi6iiffii4iI")      # + v5 : drapeaux (radar, pseudos)
 SHM_SIZE = FRAMES_OFF + 4 + SHM_CAM.size
 DLL_NAME = "mec_overlay.dll"
-DLL_COPY = "mec_overlay_v40.dll"
+DLL_COPY = "mec_overlay_v41.dll"
 
 
 def imgui_color(hex_color):
@@ -2413,7 +2450,7 @@ TXT, DIM, FAINT = "#f2f3f5", "#8b929c", "#5a616b"
 RED, RED_HI, RED_LO = "#e3261c", "#ff3b30", "#9e1a13"
 GREEN, ORANGE, GREY = "#4cd964", "#ffb347", "#3a404b"
 FONT = "Segoe UI"
-APP_VERSION = "3.6.6"
+APP_VERSION = "3.7.0"
 
 
 def _round_rect(c, x1, y1, x2, y2, r, **kw):
@@ -3672,6 +3709,8 @@ class App:
         self.mode = mode
         if POSE:
             POSE.set_role({"host": 1, "join": 2}.get(mode, 3), self.cfg.get("sync_tod", True))
+            if hasattr(POSE, "set_map_players"):
+                POSE.set_map_players(self.cfg.get("map_players", True))   # les autres sur la carte du jeu
         self.radar = Radar(self.root, self.game, self.net, self.cfg, self.link)
         log(f"Démarrage mode {mode} en tant que {name}")
 

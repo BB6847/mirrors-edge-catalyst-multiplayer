@@ -91,6 +91,12 @@ constexpr size_t Entity_TransformSpace = 0x38;
 
 constexpr size_t SRP_PlaybackState = 0x38, SRP_Setup = 0xb0, SRP_Pose = 0x178, SRP_PoseEnd = 0x180,
                  SRP_PoseCap = 0x188, SRP_PoseArena = 0x190, SRP_NetState = 0x1a0;
+// MECMP 0.9.0-beta.3 (MIT) : unspawn, spawners client, contrôle du nombre d'os côté client
+constexpr size_t Vtbl_SpawnerUnspawn = 0x108;                 // (spawner, personnage, détruire, 0)
+constexpr uintptr_t Fn_SpawnerUnspawn = 0x14338e4c0;          // les deux classes de spawner
+constexpr uintptr_t Slot_ClientCharacterSpawnFactory = 0x141b2ad88, Fn_ClientCharacterSpawnFactory = 0x1432a67c0;
+constexpr uintptr_t Vtbl_ClientCharacterSpawnEntity = 0x141b2ac20;
+constexpr size_t ClientSpawner_Spawned = 0xb0, ClientSpawner_LastBus = 0xd0, Character_Bus = 0x28, CRP_CountOk = 0x2e4;
 constexpr size_t CRP_PlaybackState = 0x40, CRP_PlaybackForced = 0xb0, CRP_Setup = 0xb8,
                  CRP_ReceivedPose = 0x180, CRP_ExpectedBones = 0x200, CRP_SkipRoot = 0x2e6;
 constexpr size_t Rec_Stride = 0x68, Rec_Capacity = 0x70, Rec_Base = 0x78, Rec_Head = 0x88;
@@ -251,6 +257,7 @@ bool shownPosition(uint32_t id, float out[3]);
 void* clientCharacter(uint32_t peer);   // personnage client du fantôme montré (0 = aucun)
 bool isGhostCharacter(void* serverCharacter);
 void* firstServerCharacter();          // personnage serveur du 1er fantôme (0 = aucun)
+void onClientSpawner(void* entity);    // un ClientCharacterSpawnEntity créé (crochet)
 void status(char* out, size_t cap);
 }  // namespace ghosts
 
@@ -330,6 +337,14 @@ void requestSpawn();                           // test : un garde devant moi (bo
 void publish(const Event& e);                  // -> coop (game_core)
 int take(Event* out, int cap);                 // <- coop (game_core)
 }
+
+namespace playersmap {
+void install();                                // crochet de la mise à jour des marqueurs d'amis
+void publishOwnProfile();                      // thread client
+void setOwnProfile(uint64_t id, const char* name);          // -> coop (game_core)
+bool profileOf(uint32_t peer, uint64_t& id, char name[32]);  // <- coop (game_core)
+bool enabled();
+}  // namespace playersmap
 
 namespace aitarget {
 void tick(int role);                           // thread serveur
