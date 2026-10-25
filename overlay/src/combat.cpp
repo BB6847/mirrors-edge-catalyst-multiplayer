@@ -284,19 +284,30 @@ static void spawnOne() {
         n = g_nsp;
         memcpy(sps, g_spawners, n * sizeof(void*));
     }
-    // un spawner de garde de mêlée de préférence (AIMelee), sinon un tireur (AIRanged), sinon le premier
-    void* best = NULL;
-    int bestScore = -1;
-    for (int i = 0; i < n; i++) {
+    // chaque appui : le type de garde SUIVANT (bleus de mêlée, blancs, tireurs...) : les bleus (AIMelee) ne ciblent
+    // que Faith, il faut pouvoir essayer les autres (25/10)
+    struct Kind { void* sp; char name[128]; };
+    static Kind kinds[24];
+    int nk = 0;
+    for (int i = 0; i < n && nk < 24; i++) {
         if (!level::spawnerAlive(sps[i])) continue;
         uintptr_t sd = readOr<uintptr_t>((uintptr_t)sps[i] + Spawner_Data);
         uintptr_t bp = sd ? readOr<uintptr_t>(sd + ReferenceObjectData_Blueprint) : 0;
         char name[128] = {0};
         if (!bp || !readCString(readOr<uintptr_t>(bp + Asset_Name), name, sizeof(name))) continue;
-        int score = strstr(name, "AIMelee/AIMelee") ? 3 : strstr(name, "AIMelee") ? 2 : strstr(name, "AIRanged") ? 1 : 0;
-        if (score > bestScore) { bestScore = score; best = sps[i]; }
+        if (!strstr(name, "AI")) continue;
+        bool dup = false;
+        for (int k = 0; k < nk && !dup; k++) dup = strcmp(kinds[k].name, name) == 0;
+        if (dup) continue;
+        kinds[nk].sp = sps[i];
+        lstrcpynA(kinds[nk].name, name, sizeof(kinds[nk].name));
+        nk++;
     }
-    if (!best) { logf("combat : garde : aucun spawner de garde connu dans ce niveau"); return; }
+    if (!nk) { logf("combat : garde : aucun spawner de garde connu dans ce niveau"); return; }
+    static unsigned turn = 0;
+    const Kind& pick = kinds[turn++ % nk];
+    void* best = pick.sp;
+    logf("combat : garde : type %u/%d : %s", (turn - 1) % nk + 1, nk, pick.name);
     // 5 m devant moi, tourné vers moi
     LinearTransform t = mt;
     for (int a = 0; a < 3; a++) {

@@ -51,8 +51,15 @@ static void hookDamage(void* self, void* msg) {
     if (victim && victim == g_echoPlayer) {
         if (InterlockedIncrement(&g_echoHits) <= 40)
             logf("gardes : COUP SUR L'ÉCHO : dégâts %.1f, type %d (frappé par le joueur n°%d)", dmg, type, (int)ai);
-    } else if (InterlockedIncrement(&g_otherHits) <= 10) {
-        logf("gardes : coup sur un joueur (n°%d%s) : dégâts %.1f, type %d", (int)vi, victim ? "" : ", inconnu", dmg, type);
+    } else {
+        // tous les coups qui ne visent pas Faith sont notés (la limite à 10 avait tout mangé le 25/10)
+        void* me = level::playerCharacter();
+        uintptr_t mine = me ? readOr<uintptr_t>((uintptr_t)me + Character_Player) : 0;
+        bool onMe = victim && victim == mine;
+        if (InterlockedIncrement(&g_otherHits) <= (onMe ? 8 : 300))
+            logf("gardes : coup sur %s (n°%d, joueur %llx, écho %llx, frappé par n°%d) : dégâts %.1f, type %d",
+                 onMe ? "MOI" : victim ? "un AUTRE joueur" : "personne (n° inconnu)", (int)vi, (unsigned long long)victim,
+                 (unsigned long long)g_echoPlayer, (int)ai, dmg, type);
     }
     g_origDamage(self, msg);
 }
