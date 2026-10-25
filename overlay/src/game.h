@@ -329,6 +329,11 @@ void publish(const Event& e);                  // -> coop (game_core)
 int take(Event* out, int cap);                 // <- coop (game_core)
 }
 
+namespace aitarget {
+void tick(int role);                           // thread serveur
+void levelChanged();
+}  // namespace aitarget
+
 namespace interact {
 #pragma pack(push, 1)
 struct Event { float pos[3]; uint32_t id; uint32_t key; uint32_t peer; };   // un signal « touche F » sur une zone

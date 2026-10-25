@@ -1146,7 +1146,7 @@ static void onTick(void* world, float dt) {
     (void)dt;
     static void* lastWorld = NULL;
     if (world != lastWorld) {
-        if (lastWorld) { ghosts::levelChanged(); teleport::levelChanged(); combat::levelChanged(); }
+        if (lastWorld) { ghosts::levelChanged(); teleport::levelChanged(); combat::levelChanged(); aitarget::levelChanged(); }
         lastWorld = world;
         g_levelStartTick = g_ticks;
     }
@@ -1165,6 +1165,7 @@ static void onTick(void* world, float dt) {
     PoseShm* s = shm();
     if (s && s->magic == 0x5043454D) {
         s->myTod = tod::tick((int)s->role, s->followTod != 0, s->hostTod);
+        aitarget::tick((int)s->role);
         lstrcpynA(s->todStatus, tod::status(), sizeof(s->todStatus));
         static uint32_t lastReq = 0;
         static bool first = true;
