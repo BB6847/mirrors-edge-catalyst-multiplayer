@@ -86,7 +86,12 @@ static void updateManager(uintptr_t mgr, bool on) {
             Want& w = want[nw];
             memset(&w, 0, sizeof(w));
             w.peer = all[i].id;
-            if (profileOf(all[i].id, w.oid.id, w.oid.name)) nw++;
+            if (profileOf(all[i].id, w.oid.id, w.oid.name)) { nw++; continue; }
+            // sans profil EA (serveurs du jeu hors ligne, 25/10) : un faux profil à son pseudo. Le jeu n'aura pas
+            // de Runner Tag à afficher, mais le marqueur peut quand même apparaître (essai).
+            w.oid.id = 0x4d45430000000000ull | all[i].id;        // « MEC » + n° du joueur : jamais un vrai profil
+            lstrcpynA(w.oid.name, all[i].name[0] ? all[i].name : "Ami", sizeof(w.oid.name));
+            nw++;
         }
     }
     static int lastNw = -1;
