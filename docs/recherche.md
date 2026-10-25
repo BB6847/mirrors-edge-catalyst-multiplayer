@@ -73,3 +73,20 @@ Adresses en VA (base 0x140000000).
 - `ghidra/dec.sh sortie.txt 0xADRESSE…` (dans l'espace de travail de Claude) : décompile en ~5 s par appel.
 - REA (Claude Desktop) : chaque appel est limité à 60 s et une analyse annulée est perdue ; inutilisable pour
   analyser l'exe entier, utile pour de petits fichiers.
+
+## MECMP 0.9.0-beta.3 (licence MIT) : pistes à reprendre
+
+Lu dans `multi/mecmp-0.9.0-beta.3/src/game/engine.h` et le CHANGELOG (à créditer si on reprend du code) :
+- `SpawnInfo +0x40 = player` : le spawn d'un personnage peut recevoir directement un ServerPlayer.
+- Retirer un fantôme : spawner case 0x108 `unspawn(spawner, personnage, détruire, 0)` (0x14338e4c0) ; libère aussi
+  le joueur créé pour le personnage.
+- Marqueurs des joueurs sur la carte : PresenceInfoManager (`assignSlot` 0x143a405e0, vtable 0x141c74be8,
+  emplacements 0x50 octets : affiché, priorité, OnlineId, position).
+- Pause des menus : PamUISystem (case 0x141cb64f0 → 0x143b16c50), contrôleur de pause UISystem +0x8c8
+  (demandes en +0x08 / +0x0c).
+- Courses (contre-la-montre, dashs) : créateurs de PamServerNamedChallengeEntity (0x141c7ee00) et
+  PamServerChallengeMarkerEntity (0x141c7e9f0).
+- Corps entier : 85 des 182 os envoyés (doigts, poignets…) au lieu de 23, en réglant l'enregistreur du joueur
+  (PamClientReplayRecordingComponent, créateur 0x141c491c8) avant le chargement du niveau.
+- Écran « Ton écho » et carte : garder le personnage du jeu en dernier dans les listes du spawner, côté client aussi ;
+  relancer la pose des fantômes après la carte.
