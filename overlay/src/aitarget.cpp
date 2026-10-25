@@ -22,6 +22,51 @@ static const uintptr_t Fn_SendNow = 0x142a39770, Fn_EnableTargetCtor = 0x144674e
 static const size_t Slot_SetPlayer = 0x2d0, Player_Team = 0x139c;
 static const uintptr_t Fn_PlayerSetTeam = 0x143359070;   // (joueur, équipe) : aussi l'équipe de son personnage
 
+// Coups des gardes sur un JOUEUR (lu le 25/10) : 0x1439242f0(objet, message), appelé par la case 0x141c40670 :
+//   message +0x90 = n° du joueur touché, +0x98 = n° de celui qui frappe (table : gestionnaire des joueurs +0x920)
+//   -> personnage du joueur (joueur +0x1478) -> son composant de santé -> 0x1434d94e0 (dégâts appliqués).
+//   dégâts = message +0xc0 ; type = [message aligné + 0x28] (102 = coup de poing de garde).
+//   L'écho n'a pas de composant de santé : ses coups s'arrêtent là. On les note (et plus tard : envoyés à l'autre joueur).
+static const uintptr_t Slot_PlayerDamage = 0x141c40670, Fn_PlayerDamage = 0x1439242f0, Glob_AlignAdd = 0x142119008;
+typedef void (*PlayerDamageFn)(void*, void*);
+static PlayerDamageFn g_origDamage = NULL;
+static volatile uintptr_t g_echoPlayer = 0;
+static volatile LONG g_echoHits = 0, g_otherHits = 0;
+
+static uintptr_t playerByIndex(uint32_t idx) {
+    if (idx == 0xffffffffu) return 0;
+    uintptr_t ctx = readOr<uintptr_t>(rva(kServerGameContext));
+    uintptr_t mgr = ctx ? readOr<uintptr_t>(ctx + 0x68) : 0;
+    uintptr_t tab = mgr ? readOr<uintptr_t>(mgr + 0x920) : 0;
+    return tab && idx < 4096 ? readOr<uintptr_t>(tab + (uintptr_t)idx * 8) : 0;
+}
+
+static void hookDamage(void* self, void* msg) {
+    uint32_t vi = readOr<uint32_t>((uintptr_t)msg + 0x90, 0xffffffffu), ai = readOr<uint32_t>((uintptr_t)msg + 0x98, 0xffffffffu);
+    uintptr_t victim = playerByIndex(vi);
+    float dmg = readOr<float>((uintptr_t)msg + 0xc0, 0.f);
+    uintptr_t al = ((uintptr_t)msg + 0x1f) & ~(uintptr_t)0xf;
+    al += readOr<uint32_t>(rva(Glob_AlignAdd));
+    int type = readOr<int>(al + 0x28, -1);
+    if (victim && victim == g_echoPlayer) {
+        if (InterlockedIncrement(&g_echoHits) <= 40)
+            logf("gardes : COUP SUR L'ÉCHO : dégâts %.1f, type %d (frappé par le joueur n°%d)", dmg, type, (int)ai);
+    } else if (InterlockedIncrement(&g_otherHits) <= 10) {
+        logf("gardes : coup sur un joueur (n°%d%s) : dégâts %.1f, type %d", (int)vi, victim ? "" : ", inconnu", dmg, type);
+    }
+    g_origDamage(self, msg);
+}
+
+static void installDamageHook() {
+    static bool done = false;
+    if (done) return;
+    uintptr_t slot = rva(Slot_PlayerDamage);
+    if (readOr<uintptr_t>(slot) != rva(Fn_PlayerDamage)) { logf("gardes : case des coups sur les joueurs inattendue"); done = true; return; }
+    g_origDamage = (PlayerDamageFn)rva(Fn_PlayerDamage);
+    if (patchPointer(slot, (uintptr_t)&hookDamage, NULL)) logf("gardes : coups des gardes sur les joueurs suivis");
+    done = true;
+}
+
 static void* g_doneFor = NULL;
 static DWORD g_seenAt = 0;
 static uintptr_t g_player = 0;
@@ -125,6 +170,8 @@ static void attach(void* ch) {
     logf("gardes : équipe du fantôme %d -> %d (la mienne : %d)", before, readOr<int>(player + Player_Team), myTeam);
     enableAsTarget(player, true);
     g_player = player;
+    g_echoPlayer = player;
+    installDamageHook();
     logf("gardes : ESSAI, le fantôme est signalé comme cible aux gardes");
 }
 
@@ -140,7 +187,7 @@ void tick(int role) {
     attach(ch);
 }
 
-void levelChanged() { g_doneFor = NULL; g_seenAt = 0; g_player = 0; }
+void levelChanged() { g_doneFor = NULL; g_seenAt = 0; g_player = 0; g_echoPlayer = 0; }
 
 }  // namespace aitarget
 }  // namespace game

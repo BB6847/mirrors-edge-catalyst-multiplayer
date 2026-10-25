@@ -96,3 +96,16 @@ Lu dans `multi/mecmp-0.9.0-beta.3/src/game/engine.h` et le CHANGELOG (à crédit
 - Repris de MECMP (PresenceInfoManager, voir plus haut) : rien ne s'affiche, même avec un faux profil au pseudo. Les
   serveurs EA du jeu sont hors ligne et la carte semble exiger un vrai profil en ligne. Coupé dans coop (réglage
   `map_players`, faux par défaut). Piste si on y revient : dessiner nos propres marqueurs par-dessus la carte (overlay).
+
+## Coups des gardes sur les joueurs (25/10)
+
+- L'écho (personnage du fantôme) n'a **aucun composant de santé** (Faith : `PamServerHumanHealthComponent`, vt 0x141c40700) :
+  les coups ne peuvent rien lui faire.
+- Chemin d'un coup de garde sur Faith : case `0x141c40670` → `0x1439242f0(objet, message)` : message +0x90 = n° du
+  joueur touché, +0x98 = n° de celui qui frappe (table gestionnaire des joueurs +0x920), +0xc0 = dégâts ;
+  type = [message aligné sur 16 + [0x142119008] + 0x28] (102 = poing de garde). Joueur +0x1478 → personnage,
+  case 0x108 (getComponent, TI 0x1428303f0) → santé → `0x1434d94e0(santé, sortie, DamageInfo)` → case 0xd8, puis
+  `0x1433f0ad0` → case 0x100 (application). DamageInfo : constructeur 0x14391e120, +0x88 dégâts, +0xb0 contexte,
+  +0xc0 type.
+- Piste : l'écho ayant son propre joueur (essai « gardes »), ses coups passent par là → les envoyer à l'autre joueur, qui
+  les applique à sa Faith par le même chemin.
