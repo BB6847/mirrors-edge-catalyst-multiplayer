@@ -19,7 +19,8 @@ namespace aitarget {
 static const uintptr_t kServerGameContext = 0x14253d670;
 static const uintptr_t Fn_CreatePlayer = 0x14334beb0, Fn_RegisterPlayer = 0x143349ce0, Fn_PlayerSetCharacter = 0x14334a4e0;
 static const uintptr_t Fn_SendNow = 0x142a39770, Fn_EnableTargetCtor = 0x144674e80, Fn_MsgDtor = 0x142d4e9a0;
-static const size_t Slot_SetPlayer = 0x2d0;
+static const size_t Slot_SetPlayer = 0x2d0, Player_Team = 0x139c;
+static const uintptr_t Fn_PlayerSetTeam = 0x143359070;   // (joueur, équipe) : aussi l'équipe de son personnage
 
 static void* g_doneFor = NULL;
 static DWORD g_seenAt = 0;
@@ -66,6 +67,13 @@ static void attach(void* ch) {
     logf("gardes : personnage relié au joueur");
     ((void (*)(uintptr_t, void*))rva(Fn_PlayerSetCharacter))(player, ch);
     logf("gardes : le joueur contrôle le personnage");
+    // même équipe que moi : les gardes n'attaquent que l'équipe adverse (essai 2 : équipe 0, ignoré par les gardes)
+    void* me = level::playerCharacter();
+    uintptr_t myPlayer = me ? readOr<uintptr_t>((uintptr_t)me + Character_Player) : 0;
+    int myTeam = myPlayer ? readOr<int>(myPlayer + Player_Team) : 0;
+    int before = readOr<int>(player + Player_Team);
+    if (myTeam) ((void (*)(uintptr_t, int))rva(Fn_PlayerSetTeam))(player, myTeam);
+    logf("gardes : équipe du fantôme %d -> %d (la mienne : %d)", before, readOr<int>(player + Player_Team), myTeam);
     enableAsTarget(player, true);
     g_player = player;
     logf("gardes : ESSAI, le fantôme est signalé comme cible aux gardes");
