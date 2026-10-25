@@ -625,7 +625,12 @@ static void Frame(const Shared& s, float dt) {
 static HRESULT __stdcall hkPresent(IDXGISwapChain* sc, UINT sync, UINT flags) {
     if (game::active() && !game::hooks::clientUpdateHooked()) game::ghosts::renderFrame();
     // (Alt+R retiré : le retour au menu remettait l histoire à zéro)
-    if (!g_ready) g_ready = InitImGui(sc);
+    if (!g_ready) {
+        static bool once = false;
+        if (!once) { once = true; game::logf("affichage : 1re image vue, préparation"); }
+        g_ready = InitImGui(sc);
+        if (g_ready) game::logf("affichage : prêt");
+    }
     Shared s;
     if (g_ready && ReadShared(s)) {
         g_shared->dll_frames++;
@@ -697,7 +702,8 @@ static DWORD WINAPI InitThread(LPVOID) {
         MH_Initialize();
         MH_CreateHook(present, (void*)hkPresent, (void**)&oPresent);
         MH_CreateHook(resize, (void*)hkResize, (void**)&oResize);
-        MH_EnableHook(MH_ALL_HOOKS);
+        int st = MH_EnableHook(MH_ALL_HOOKS);
+        game::logf("affichage : crochet de l'image %s (Present %p)", st == 0 ? "posé" : "REFUSÉ", present);
         sc->Release();
         dev->Release();
         ctx->Release();

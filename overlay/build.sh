@@ -40,7 +40,7 @@ for f in $M/src/buffer.c $M/src/hook.c $M/src/trampoline.c $M/src/hde/hde64.c; d
 done
 # le mod
 OBJS=""
-for f in overlay game_core ghosts models sync mission audio research research_ai combat menu progression interact aitarget playersmap; do
+for f in overlay game_core ghosts models sync mission audio research research_ai combat menu progression interact aitarget playersmap crashlog; do
   if [ "$f" = overlay ]; then EXTRA="-I$I -I$M/include"; else EXTRA=""; fi
   clang++ $CF -std=c++17 $EXTRA -c "$SRC/$f.cpp" -o "$f.o"
   OBJS="$OBJS $f.o"

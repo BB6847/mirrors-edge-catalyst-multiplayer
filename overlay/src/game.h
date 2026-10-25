@@ -46,6 +46,7 @@ struct Guard {
     ~Guard() { LeaveCriticalSection(&l.cs); }
 };
 
+namespace crashlog { void install(); }   // journal des plantages (crashlog.cpp)
 void logf(const char* fmt, ...);   // journal : <dossier du jeu>\_mod_coop\log_overlay.txt
 
 inline bool finite(float v) { return __builtin_isfinite(v); }

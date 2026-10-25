@@ -544,11 +544,43 @@ static void postUpdate(void* world, void* info) {
 
 bool clientUpdateHooked() { return g_updaterHooked; }
 
+static bool isCode(uintptr_t a) {
+    MEMORY_BASIC_INFORMATION mbi;
+    return a && VirtualQuery((void*)a, &mbi, sizeof(mbi)) &&
+           (mbi.Protect & (PAGE_EXECUTE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_EXECUTE_WRITECOPY));
+}
+
+// GridNode (outil de test) vérifie au démarrage que cette case contient la fonction du jeu, sinon il reste
+// inactif. Quand il arrive après nous, on lui rend la case le temps qu'il s'installe, puis on se remet devant lui.
+static DWORD WINAPI gridnodeWatch(LPVOID) {
+    bool seen = GetModuleHandleA("gridnode.dll") != NULL;
+    for (;;) {
+        Sleep(100);
+        bool now = GetModuleHandleA("gridnode.dll") != NULL;
+        if (!now || seen) { seen = now; continue; }
+        seen = true;
+        uintptr_t slot = rva(Slot_ServerWorldPostUpdate), orig = rva(Fn_ServerWorldPostUpdate);
+        if (readOr<uintptr_t>(slot) != (uintptr_t)&postUpdate || (uintptr_t)g_origPostUpdate != orig) continue;
+        patchPointer(slot, orig, NULL);
+        logf("GridNode arrive : case du tour de jeu rendue le temps qu'il s'installe");
+        uintptr_t cur = orig;
+        for (int i = 0; i < 200 && cur == orig; i++) { Sleep(100); cur = readOr<uintptr_t>(slot); }
+        if (cur != orig && isCode(cur)) g_origPostUpdate = (PostUpdateFn)cur;
+        patchPointer(slot, (uintptr_t)&postUpdate, NULL);
+        logf(cur != orig ? "GridNode installé : on se remet devant lui" : "GridNode ne s'est pas installé : case reprise");
+    }
+    return 0;
+}
+
 bool install(TickFn onTick, bool* ghostClients) {
     uintptr_t slot = rva(Slot_ServerWorldPostUpdate), cur = 0;
-    if (!read(slot, cur) || cur != rva(Fn_ServerWorldPostUpdate)) {
-        logf("crochet tick : contenu inattendu (%p) : version du jeu non reconnue, rien n'est installé", (void*)cur);
-        return false;
+    if (!read(slot, cur) || !cur) { logf("crochet tick : case illisible, rien n'est installé"); return false; }
+    if (cur != rva(Fn_ServerWorldPostUpdate)) {
+        if (!isCode(cur)) {
+            logf("crochet tick : contenu inattendu (%p) : version du jeu non reconnue, rien n'est installé", (void*)cur);
+            return false;
+        }
+        logf("crochet tick : déjà détourné par un autre mod (GridNode ?), on se met devant");
     }
     g_onTick = onTick;
     g_origPostUpdate = (PostUpdateFn)cur;
@@ -563,9 +595,12 @@ bool install(TickFn onTick, bool* ghostClients) {
         return false;
     }
     hookUpdaters();
+    logf("démarrage : crochets du jeu posés");
     audio::install();
     combat::install();
     playersmap::install();
+    HANDLE w = CreateThread(NULL, 0, gridnodeWatch, NULL, 0, NULL);
+    if (w) CloseHandle(w);
     *ghostClients = replay && chars;
     logf("crochets : installés%s", *ghostClients ? "" : " (sans les clients de fantômes : pas de personnages 3D)");
     return true;
@@ -1275,8 +1310,10 @@ static DWORD WINAPI MonitorThread(LPVOID) {
         for (auto& c : checks) ok = ok && findType(c.name) == rva(c.va);
         if (ok) break;
         if (tries > 120) { logf("démarrage : version du jeu non reconnue, personnages 3D désactivés"); return 0; }
+        if (tries % 10 == 9) logf("démarrage : types du jeu pas encore reconnus (%d s)", tries + 1);
         Sleep(1000);
     }
+    logf("démarrage : types du jeu reconnus");
     ghosts::setCharacterDataType(findType("PamCharacterEntityData"));
     bool ghostClients = false;
     if (!hooks::install(&onTick, &ghostClients)) return 0;
@@ -1350,12 +1387,14 @@ static DWORD WINAPI MonitorThread(LPVOID) {
 }
 
 void start() {
+    g_logLock.init();   // en premier : l'affichage écrit aussi dans le journal
     // Un seul module 3D par partie : si une version plus ancienne de l'overlay est déjà dans le jeu
     // (mise à jour sans relancer le jeu), on ne double pas les crochets ni les fantômes.
     char name[64];
     wsprintfA(name, "Local\\MECCoop3D_%lu", GetCurrentProcessId());
     HANDLE m = CreateMutexA(NULL, FALSE, name);
     if (m && GetLastError() == ERROR_ALREADY_EXISTS) { CloseHandle(m); g_alreadyRunning = true; return; }
+    crashlog::install();
     level::init();
     remote::g_m.init();
     ghosts::init();
@@ -1365,7 +1404,6 @@ void start() {
     combat::init();
     interact::init();
     progression::init();
-    g_logLock.init();
     g_active = true;
     HANDLE t = CreateThread(NULL, 0, MonitorThread, NULL, 0, NULL);
     if (t) CloseHandle(t);
